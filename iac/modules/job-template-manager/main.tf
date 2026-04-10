@@ -18,9 +18,10 @@ resource "nomad_job" "template_manager" {
     node_pool     = var.node_pool
     current_count = tonumber(data.external.template_manager_count.result.count)
 
-    provider            = var.provider_name
-    provider_gcp_config = var.provider_gcp_config
-    provider_aws_config = var.provider_aws_config
+    provider                = var.provider_name
+    provider_gcp_config     = var.provider_gcp_config
+    provider_aws_config     = var.provider_aws_config
+    provider_hetzner_config = var.provider_hetzner_config
 
     port             = var.port
     environment      = var.environment

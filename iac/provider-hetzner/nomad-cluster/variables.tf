@@ -74,6 +74,30 @@ variable "container_registry_url" {
 }
 
 // ---
+// Build Node Pool
+// ---
+
+variable "build_cluster_size" {
+  type    = number
+  default = 1
+}
+
+variable "build_server_type" {
+  type    = string
+  default = "ccx33"
+}
+
+variable "build_node_pool_name" {
+  type    = string
+  default = "build"
+}
+
+variable "build_node_labels" {
+  type    = list(string)
+  default = []
+}
+
+// ---
 // Cluster secrets
 // ---
 

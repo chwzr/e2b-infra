@@ -51,7 +51,17 @@ func newAWSStorage(ctx context.Context, bucketName string) (*awsStorage, error) 
 		return nil, err
 	}
 
-	client := s3.NewFromConfig(cfg)
+	// Support S3-compatible storage (Hetzner Object Storage, MinIO, etc.)
+	// by setting the S3_ENDPOINT environment variable.
+	var opts []func(*s3.Options)
+	if endpoint := os.Getenv("S3_ENDPOINT"); endpoint != "" {
+		opts = append(opts, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+			o.UsePathStyle = true
+		})
+	}
+
+	client := s3.NewFromConfig(cfg, opts...)
 	presignClient := s3.NewPresignClient(client)
 
 	return &awsStorage{

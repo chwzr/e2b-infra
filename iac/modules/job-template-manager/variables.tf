@@ -36,6 +36,21 @@ variable "provider_aws_config" {
   }
 }
 
+variable "provider_hetzner_config" {
+  type = object({
+    s3_endpoint            = optional(string, "")
+    s3_region              = optional(string, "")
+    docker_registry_url    = optional(string, "")
+    docker_repository_name = optional(string, "")
+  })
+  default = {
+    s3_endpoint            = ""
+    s3_region              = ""
+    docker_registry_url    = ""
+    docker_repository_name = ""
+  }
+}
+
 variable "node_pool" {
   type = string
 }

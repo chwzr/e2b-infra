@@ -221,6 +221,39 @@ variable "launch_darkly_api_key" {
   sensitive = true
 }
 
+# Template Manager / Build
+variable "build_node_pool" {
+  type = string
+}
+
+variable "build_cluster_size" {
+  type    = number
+  default = 1
+}
+
+variable "template_manager_port" {
+  type    = number
+  default = 5008
+}
+
+variable "api_secret" {
+  type      = string
+  sensitive = true
+}
+
+variable "fc_env_pipeline_bucket_name" {
+  type = string
+}
+
+variable "template_bucket_name" {
+  type = string
+}
+
+variable "build_cache_bucket_name" {
+  type    = string
+  default = ""
+}
+
 # DB connection pool
 variable "db_max_open_connections" {
   type    = number

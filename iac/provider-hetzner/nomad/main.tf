@@ -176,4 +176,51 @@ module "logs_collector" {
   grafana_api_key       = var.grafana_logs_api_key
 }
 
-# TODO: orchestrator, template_manager, clickhouse jobs will be added in later steps
+# ---
+# Template Manager
+# ---
+module "template_manager" {
+  source = "../../modules/job-template-manager"
+
+  provider_name = "hetzner"
+  provider_hetzner_config = {
+    s3_endpoint            = "https://${var.s3_endpoint}"
+    s3_region              = var.s3_region
+    docker_registry_url    = var.container_registry_url
+    docker_repository_name = "core/custom-environments"
+  }
+
+  update_stanza = var.build_cluster_size > 1
+  node_pool     = var.build_node_pool
+
+  port             = var.template_manager_port
+  environment      = var.environment
+  consul_acl_token = var.consul_acl_token
+  domain_name      = var.domain_name
+
+  api_secret                   = var.api_secret
+  artifact_source              = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/template-manager"
+  template_bucket_name         = var.template_bucket_name
+  build_cache_bucket_name      = var.build_cache_bucket_name
+  otel_collector_grpc_endpoint = "localhost:${var.otel_collector_grpc_port}"
+  logs_collector_address       = "http://localhost:${var.logs_proxy_port}"
+  clickhouse_connection_string = local.clickhouse_connection_string
+  launch_darkly_api_key        = var.launch_darkly_api_key
+
+  nomad_addr  = "https://nomad.${var.domain_name}"
+  nomad_token = var.nomad_acl_token
+}
+
+# ---
+# Template Manager Autoscaler (only when build_cluster_size > 1)
+# ---
+module "template_manager_autoscaler" {
+  source = "../../modules/job-template-manager-autoscaler"
+  count  = var.build_cluster_size > 1 ? 1 : 0
+
+  node_pool                  = var.api_node_pool
+  nomad_token                = var.nomad_acl_token
+  apm_plugin_artifact_source = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/nomad-nodepool-apm"
+}
+
+# TODO: orchestrator, clickhouse jobs will be added in later steps

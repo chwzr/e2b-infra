@@ -96,6 +96,10 @@ module "cluster" {
   api_server_type        = var.api_server_type
   api_node_pool_name     = local.api_pool_name
   container_registry_url = var.container_registry_url
+
+  build_cluster_size   = var.build_cluster_size
+  build_server_type    = var.build_server_type
+  build_node_pool_name = local.build_pool_name
 }
 
 module "nomad" {
@@ -141,4 +145,11 @@ module "nomad" {
   launch_darkly_api_key          = module.init.launch_darkly_api_key
 
   loki_bucket_name = module.init.loki_bucket_name
+
+  build_node_pool             = local.build_pool_name
+  build_cluster_size          = var.build_cluster_size
+  api_secret                  = module.init.api_secret
+  fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
+  template_bucket_name        = module.init.fc_template_bucket_name
+  build_cache_bucket_name     = module.init.fc_template_build_cache_bucket_name
 }
