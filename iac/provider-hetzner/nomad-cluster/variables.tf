@@ -98,6 +98,47 @@ variable "build_node_labels" {
 }
 
 // ---
+// Orchestrator (Dedicated Servers)
+// ---
+
+variable "orchestrator_server_ips" {
+  type    = list(string)
+  default = []
+}
+
+variable "orchestrator_ssh_private_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "orchestrator_vswitch_vlan_id" {
+  type    = number
+  default = 4000
+}
+
+variable "orchestrator_private_network_range" {
+  type    = string
+  default = "10.0.0.0/8"
+}
+
+variable "orchestrator_private_subnet_range" {
+  type    = string
+  default = "10.0.1.0/24"
+}
+
+variable "orchestrator_node_pool_name" {
+  type    = string
+  default = "default"
+}
+
+variable "consul_retry_join_ips" {
+  type        = list(string)
+  default     = []
+  description = "Private IPs of Consul server nodes for dedicated server retry_join"
+}
+
+// ---
 // ClickHouse Node Pool
 // ---
 

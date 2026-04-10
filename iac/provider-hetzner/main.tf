@@ -69,6 +69,7 @@ module "init" {
   bucket_prefix  = "${var.prefix}${var.s3_region}-"
   ssh_public_key = var.ssh_public_key
   network_zone   = var.network_zone
+  vswitch_id     = var.vswitch_id
 }
 
 module "cluster" {
@@ -105,6 +106,12 @@ module "cluster" {
   clickhouse_server_type           = var.clickhouse_server_type
   clickhouse_node_pool_name        = local.clickhouse_pool_name
   clickhouse_job_constraint_prefix = local.clickhouse_pool_name
+
+  orchestrator_server_ips      = var.orchestrator_server_ips
+  orchestrator_ssh_private_key = var.orchestrator_ssh_private_key
+  orchestrator_vswitch_vlan_id = var.vswitch_vlan_id
+  orchestrator_node_pool_name  = local.client_pool_name
+  consul_retry_join_ips        = var.consul_retry_join_ips
 }
 
 module "nomad" {
@@ -161,4 +168,6 @@ module "nomad" {
   fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
   template_bucket_name        = module.init.fc_template_bucket_name
   build_cache_bucket_name     = module.init.fc_template_build_cache_bucket_name
+
+  orchestrator_node_pool = local.client_pool_name
 }

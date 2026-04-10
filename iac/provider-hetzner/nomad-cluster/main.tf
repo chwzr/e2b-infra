@@ -82,6 +82,28 @@ module "build" {
   container_registry_url       = var.container_registry_url
 }
 
+module "orchestrator" {
+  source = "../modules/nodepool-orchestrator"
+  count  = length(var.orchestrator_server_ips) > 0 ? 1 : 0
+
+  server_ips      = var.orchestrator_server_ips
+  ssh_private_key = var.orchestrator_ssh_private_key
+
+  vswitch_vlan_id       = var.orchestrator_vswitch_vlan_id
+  private_network_range = var.orchestrator_private_network_range
+  private_subnet_range  = var.orchestrator_private_subnet_range
+
+  consul_retry_join_ips = var.consul_retry_join_ips
+
+  node_pool_name = var.orchestrator_node_pool_name
+  datacenter     = var.datacenter
+
+  consul_acl_token             = var.consul_acl_token
+  consul_gossip_encryption_key = var.consul_gossip_encryption_key
+  consul_dns_request_token     = var.consul_dns_request_token
+  container_registry_url       = var.container_registry_url
+}
+
 module "clickhouse" {
   source = "../modules/nodepool-clickhouse"
 

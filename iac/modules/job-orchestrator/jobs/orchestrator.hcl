@@ -116,6 +116,14 @@ job "orchestrator-${latest_orchestrator_job_id}" {
         AWS_REGION                   = "${provider_aws_config.region}"
         AWS_DOCKER_REPOSITORY_NAME   = "${provider_aws_config.docker_repository_name}"
 %{ endif }
+%{ if provider == "hetzner" }
+        ARTIFACTS_REGISTRY_PROVIDER       = "DockerHub"
+        STORAGE_PROVIDER                  = "AWSBucket"
+        S3_ENDPOINT                       = "${provider_hetzner_config.s3_endpoint}"
+        AWS_REGION                        = "${provider_hetzner_config.s3_region}"
+        DOCKER_REGISTRY_URL               = "${provider_hetzner_config.docker_registry_url}"
+        DOCKER_REGISTRY_REPOSITORY_NAME   = "${provider_hetzner_config.docker_repository_name}"
+%{ endif }
 %{ if persistent_volume_mounts != "" }
         PERSISTENT_VOLUME_MOUNTS     = "${persistent_volume_mounts}"
 %{ endif }

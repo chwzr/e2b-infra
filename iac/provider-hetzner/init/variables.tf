@@ -16,6 +16,11 @@ variable "network_zone" {
   default = "eu-central"
 }
 
+variable "vswitch_id" {
+  type    = number
+  default = null
+}
+
 // ---
 // Secrets passthrough variables
 // These are stored externally (not in a managed secret service)

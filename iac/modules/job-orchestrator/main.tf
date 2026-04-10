@@ -24,9 +24,10 @@ locals {
     build_cache_bucket_name  = var.build_cache_bucket_name
     persistent_volume_mounts = join(",", [for key, value in var.persistent_volume_mounts : format("%s:%s", key, value)])
 
-    provider            = var.provider_name
-    provider_aws_config = var.provider_aws_config
-    provider_gcp_config = var.provider_gcp_config
+    provider                = var.provider_name
+    provider_aws_config     = var.provider_aws_config
+    provider_gcp_config     = var.provider_gcp_config
+    provider_hetzner_config = var.provider_hetzner_config
 
     artifact_source = var.artifact_source
 

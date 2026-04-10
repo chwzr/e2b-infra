@@ -14,6 +14,7 @@ module "network" {
 
   prefix       = var.prefix
   network_zone = var.network_zone
+  vswitch_id   = var.vswitch_id
 }
 
 resource "hcloud_ssh_key" "cluster" {

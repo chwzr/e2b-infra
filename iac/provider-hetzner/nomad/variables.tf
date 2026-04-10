@@ -218,10 +218,30 @@ variable "sandbox_access_token_hash_seed" {
   sensitive = true
 }
 
-# Orchestrator (port needed by API for routing)
+# Orchestrator
+variable "orchestrator_node_pool" {
+  type    = string
+  default = "default"
+}
+
 variable "orchestrator_port" {
   type    = number
   default = 5008
+}
+
+variable "orchestrator_proxy_port" {
+  type    = number
+  default = 5007
+}
+
+variable "allow_sandbox_internet" {
+  type    = bool
+  default = true
+}
+
+variable "envd_timeout" {
+  type    = string
+  default = "40s"
 }
 
 # Loki

@@ -255,4 +255,40 @@ module "clickhouse" {
   clickhouse_migrator_image = "${var.container_registry_url}/core/clickhouse-migrator:latest"
 }
 
-# TODO: orchestrator job will be added in a later step
+# ---
+# Orchestrator
+# ---
+module "orchestrator" {
+  source = "../../modules/job-orchestrator"
+
+  provider_name = "hetzner"
+  provider_hetzner_config = {
+    s3_endpoint            = "https://${var.s3_endpoint}"
+    s3_region              = var.s3_region
+    docker_registry_url    = var.container_registry_url
+    docker_repository_name = "core/custom-environments"
+  }
+
+  node_pool  = var.orchestrator_node_pool
+  port       = var.orchestrator_port
+  proxy_port = var.orchestrator_proxy_port
+
+  environment           = var.environment
+  artifact_source       = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/orchestrator"
+  orchestrator_checksum = "hetzner-s3"
+
+  logs_collector_address       = "http://localhost:${var.logs_proxy_port}"
+  otel_collector_grpc_endpoint = "localhost:${var.otel_collector_grpc_port}"
+  envd_timeout                 = var.envd_timeout
+  template_bucket_name         = var.template_bucket_name
+  allow_sandbox_internet       = var.allow_sandbox_internet
+  clickhouse_connection_string = local.clickhouse_connection_string
+  redis_url                    = var.redis_url
+  redis_cluster_url            = var.redis_cluster_url
+  redis_tls_ca_base64          = var.redis_tls_ca_base64
+
+  consul_token            = var.consul_acl_token
+  domain_name             = var.domain_name
+  build_cache_bucket_name = var.build_cache_bucket_name
+  launch_darkly_api_key   = var.launch_darkly_api_key
+}

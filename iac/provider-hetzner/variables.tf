@@ -145,3 +145,38 @@ variable "client_proxy_count" {
   type    = number
   default = 1
 }
+
+// ---
+// Orchestrator (Hetzner Dedicated Servers)
+// ---
+
+variable "vswitch_id" {
+  type        = number
+  default     = null
+  description = "Hetzner Robot vSwitch ID for connecting dedicated servers to Cloud Network"
+}
+
+variable "vswitch_vlan_id" {
+  type        = number
+  default     = 4000
+  description = "VLAN ID assigned to the vSwitch in Hetzner Robot (4000-4091)"
+}
+
+variable "orchestrator_server_ips" {
+  type        = list(string)
+  default     = []
+  description = "Public IPs of dedicated servers for SSH provisioning"
+}
+
+variable "orchestrator_ssh_private_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "SSH private key for dedicated server access"
+}
+
+variable "consul_retry_join_ips" {
+  type        = list(string)
+  default     = []
+  description = "Private IPs of Consul server nodes for dedicated server retry_join"
+}
