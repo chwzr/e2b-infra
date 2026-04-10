@@ -98,6 +98,30 @@ variable "build_node_labels" {
 }
 
 // ---
+// ClickHouse Node Pool
+// ---
+
+variable "clickhouse_cluster_size" {
+  type    = number
+  default = 1
+}
+
+variable "clickhouse_server_type" {
+  type    = string
+  default = "cx32"
+}
+
+variable "clickhouse_node_pool_name" {
+  type    = string
+  default = "clickhouse"
+}
+
+variable "clickhouse_job_constraint_prefix" {
+  type    = string
+  default = "clickhouse"
+}
+
+// ---
 // Cluster secrets
 // ---
 

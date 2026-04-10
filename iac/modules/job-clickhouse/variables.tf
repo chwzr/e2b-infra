@@ -99,6 +99,12 @@ variable "aws_region" {
   default = ""
 }
 
+variable "s3_endpoint" {
+  type        = string
+  default     = ""
+  description = "S3-compatible endpoint URL for Hetzner Object Storage backups"
+}
+
 // ---
 // Migrator
 // ---

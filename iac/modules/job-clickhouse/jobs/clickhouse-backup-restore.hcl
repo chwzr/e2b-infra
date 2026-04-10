@@ -61,6 +61,15 @@ job "clickhouse-backup-restore" {
         S3_REGION      = "${aws_region}"
         S3_PATH        = "${backup_folder}/backup/server-${i + 1}/"
 %{ endif }
+%{ if cloud_provider == "hetzner" }
+        REMOTE_STORAGE       = "s3"
+        S3_DEBUG             = "true"
+        S3_BUCKET            = "${backup_bucket}"
+        S3_REGION            = "${aws_region}"
+        S3_PATH              = "${backup_folder}/backup/server-${i + 1}/"
+        S3_ENDPOINT          = "${s3_endpoint}"
+        S3_FORCE_PATH_STYLE  = "true"
+%{ endif }
       }
 
       resources {

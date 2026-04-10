@@ -100,6 +100,11 @@ module "cluster" {
   build_cluster_size   = var.build_cluster_size
   build_server_type    = var.build_server_type
   build_node_pool_name = local.build_pool_name
+
+  clickhouse_cluster_size          = var.clickhouse_cluster_size
+  clickhouse_server_type           = var.clickhouse_server_type
+  clickhouse_node_pool_name        = local.clickhouse_pool_name
+  clickhouse_job_constraint_prefix = local.clickhouse_pool_name
 }
 
 module "nomad" {
@@ -127,9 +132,13 @@ module "nomad" {
   redis_port    = local.redis_port
   redis_url     = local.redis_url
 
-  clickhouse_cluster_size = var.clickhouse_cluster_size
-  clickhouse_username     = module.init.clickhouse.username
-  clickhouse_password     = module.init.clickhouse.password
+  clickhouse_cluster_size        = var.clickhouse_cluster_size
+  clickhouse_username            = module.init.clickhouse.username
+  clickhouse_password            = module.init.clickhouse.password
+  clickhouse_server_secret       = module.init.clickhouse.server_secret
+  clickhouse_node_pool           = local.clickhouse_pool_name
+  clickhouse_jobs_prefix         = local.clickhouse_pool_name
+  clickhouse_backups_bucket_name = module.init.clickhouse_backups_bucket_name
 
   grafana_otel_collector_token = module.init.grafana.otel_collector_token
   grafana_otlp_url             = module.init.grafana.otlp_url

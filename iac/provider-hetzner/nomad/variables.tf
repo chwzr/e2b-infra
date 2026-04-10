@@ -114,6 +114,42 @@ variable "clickhouse_database" {
   default = "default"
 }
 
+variable "clickhouse_node_pool" {
+  type    = string
+  default = "clickhouse"
+}
+
+variable "clickhouse_jobs_prefix" {
+  type    = string
+  default = "clickhouse"
+}
+
+variable "clickhouse_server_secret" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "clickhouse_cpu_count" {
+  type    = number
+  default = 4
+}
+
+variable "clickhouse_memory_mb" {
+  type    = number
+  default = 8192
+}
+
+variable "clickhouse_metrics_port" {
+  type    = number
+  default = 9363
+}
+
+variable "clickhouse_backups_bucket_name" {
+  type    = string
+  default = ""
+}
+
 # Grafana / Observability
 variable "grafana_otel_collector_token" {
   type      = string

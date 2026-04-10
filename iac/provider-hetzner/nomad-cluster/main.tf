@@ -81,3 +81,27 @@ module "build" {
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
 }
+
+module "clickhouse" {
+  source = "../modules/nodepool-clickhouse"
+
+  prefix     = var.prefix
+  location   = var.location
+  datacenter = var.datacenter
+
+  cluster_size          = var.clickhouse_cluster_size
+  server_type           = var.clickhouse_server_type
+  node_pool_name        = var.clickhouse_node_pool_name
+  job_constraint_prefix = var.clickhouse_job_constraint_prefix
+
+  network_id   = var.network_id
+  ssh_key_id   = var.ssh_key_id
+  firewall_ids = var.firewall_ids
+
+  cluster_tag_value            = local.cluster_tag_value
+  hcloud_token                 = var.hcloud_token
+  consul_acl_token             = var.consul_acl_token
+  consul_gossip_encryption_key = var.consul_gossip_encryption_key
+  consul_dns_request_token     = var.consul_dns_request_token
+  container_registry_url       = var.container_registry_url
+}

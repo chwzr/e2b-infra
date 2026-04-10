@@ -223,4 +223,36 @@ module "template_manager_autoscaler" {
   apm_plugin_artifact_source = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/nomad-nodepool-apm"
 }
 
-# TODO: orchestrator, clickhouse jobs will be added in later steps
+# ---
+# ClickHouse
+# ---
+module "clickhouse" {
+  source = "../../modules/job-clickhouse"
+
+  provider_name = "hetzner"
+
+  node_pool             = var.clickhouse_node_pool
+  job_constraint_prefix = var.clickhouse_jobs_prefix
+  server_count          = var.clickhouse_cluster_size
+
+  server_secret = var.clickhouse_server_secret
+
+  cpu_count = var.clickhouse_cpu_count
+  memory_mb = var.clickhouse_memory_mb
+
+  clickhouse_database     = var.clickhouse_database
+  clickhouse_username     = var.clickhouse_username
+  clickhouse_password     = var.clickhouse_password
+  clickhouse_port         = var.clickhouse_port
+  clickhouse_metrics_port = var.clickhouse_metrics_port
+
+  otel_exporter_endpoint = "http://localhost:${var.otel_collector_grpc_port}"
+
+  aws_region    = var.s3_region
+  s3_endpoint   = "https://${var.s3_endpoint}"
+  backup_bucket = var.clickhouse_backups_bucket_name
+
+  clickhouse_migrator_image = "${var.container_registry_url}/core/clickhouse-migrator:latest"
+}
+
+# TODO: orchestrator job will be added in a later step

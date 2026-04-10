@@ -50,6 +50,10 @@ processors:
         host.name:
           enabled: true
 %{ endif }
+%{ if provider_name == "hetzner" }
+    detectors: [env]
+    override: true
+%{ endif }
 
   transform/set-name:
     metric_statements:
@@ -57,6 +61,9 @@ processors:
       - set(datapoint.attributes["service.instance.id"], resource.attributes["gcp.gce.instance.name"])
 %{ endif }
 %{ if provider_name == "aws" }
+      - set(datapoint.attributes["service.instance.id"], resource.attributes["host.name"])
+%{ endif }
+%{ if provider_name == "hetzner" }
       - set(datapoint.attributes["service.instance.id"], resource.attributes["host.name"])
 %{ endif }
 
