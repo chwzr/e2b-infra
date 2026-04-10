@@ -22,6 +22,10 @@ tf_vars := HCLOUD_TOKEN=$(HCLOUD_TOKEN) \
 	$(call tfvar, DOMAIN_NAME) \
 	$(call tfvar, HCLOUD_TOKEN) \
 	$(call tfvar, CONTAINER_REGISTRY) \
+	$(call tfvar, S3_ENDPOINT) \
+	$(call tfvar, S3_ACCESS_KEY) \
+	$(call tfvar, S3_SECRET_KEY) \
+	$(call tfvar, S3_REGION) \
 	$(call tfvar, CONTROL_SERVER_CLUSTER_SIZE) \
 	$(call tfvar, CONTROL_SERVER_TYPE) \
 	$(call tfvar, API_CLUSTER_SIZE) \

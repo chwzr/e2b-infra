@@ -50,6 +50,30 @@ variable "server_image" {
 }
 
 // ---
+// API Node Pool
+// ---
+
+variable "api_cluster_size" {
+  type    = number
+  default = 1
+}
+
+variable "api_server_type" {
+  type    = string
+  default = "cx32"
+}
+
+variable "api_node_pool_name" {
+  type    = string
+  default = "api"
+}
+
+variable "container_registry_url" {
+  type    = string
+  default = ""
+}
+
+// ---
 // Cluster secrets
 // ---
 
@@ -64,6 +88,11 @@ variable "consul_acl_token" {
 }
 
 variable "consul_gossip_encryption_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "consul_dns_request_token" {
   type      = string
   sensitive = true
 }

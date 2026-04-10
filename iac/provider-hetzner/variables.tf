@@ -28,6 +28,30 @@ variable "container_registry_url" {
 }
 
 // ---
+// S3-compatible Object Storage
+// ---
+
+variable "s3_endpoint" {
+  type        = string
+  description = "Hetzner Object Storage endpoint (e.g. fsn1.your-objectstorage.com)"
+}
+
+variable "s3_access_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_secret_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_region" {
+  type    = string
+  default = "fsn1"
+}
+
+// ---
 // Location / Datacenter
 // ---
 
@@ -110,4 +134,14 @@ variable "clickhouse_server_type" {
 variable "redis_managed" {
   type    = bool
   default = false
+}
+
+variable "ingress_count" {
+  type    = number
+  default = 1
+}
+
+variable "client_proxy_count" {
+  type    = number
+  default = 1
 }

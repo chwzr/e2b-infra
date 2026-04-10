@@ -70,3 +70,13 @@ resource "hcloud_load_balancer_target" "control_server" {
 
   depends_on = [hcloud_load_balancer_network.ingress]
 }
+
+# Add API nodes as targets for HTTP/HTTPS (ingress/Traefik runs on API nodes)
+resource "hcloud_load_balancer_target" "api" {
+  type             = "label_selector"
+  load_balancer_id = hcloud_load_balancer.ingress.id
+  label_selector   = "role=api"
+  use_private_ip   = true
+
+  depends_on = [hcloud_load_balancer_network.ingress]
+}

@@ -3,6 +3,9 @@ terraform {
     hcloud = {
       source = "hetznercloud/hcloud"
     }
+    minio = {
+      source = "aminueza/minio"
+    }
   }
 }
 

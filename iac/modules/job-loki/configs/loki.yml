@@ -25,6 +25,13 @@ storage_config:
     bucketnames: "${bucket_name}"
     s3forcepathstyle: false
 %{ endif }
+%{ if provider_name == "hetzner" }
+  aws:
+    region: "${aws_region}"
+    bucketnames: "${bucket_name}"
+    s3forcepathstyle: true
+    endpoint: "${s3_endpoint}"
+%{ endif }
   tsdb_shipper:
     active_index_directory: /loki/tsdb-shipper-active
     cache_location: /loki/tsdb-shipper-cache
@@ -92,6 +99,15 @@ schema_config:
         prefix: loki_index_
         period: 24h
 %{ endif }
+%{ if provider_name == "hetzner" }
+    - from: 2024-03-05
+      store: tsdb
+      object_store: aws
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+%{ endif }
 
 compactor:
   working_directory: /loki/compactor
@@ -103,6 +119,9 @@ compactor:
   delete_request_store: gcs
 %{ endif }
 %{ if provider_name == "aws" }
+  delete_request_store: aws
+%{ endif }
+%{ if provider_name == "hetzner" }
   delete_request_store: aws
 %{ endif }
 

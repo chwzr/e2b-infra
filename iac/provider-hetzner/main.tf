@@ -14,6 +14,11 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.1"
     }
+
+    minio = {
+      source  = "aminueza/minio"
+      version = "~> 3.3"
+    }
   }
 
   required_version = ">= 1.0"
@@ -28,6 +33,14 @@ terraform {
 }
 
 provider "hcloud" {}
+
+provider "minio" {
+  minio_server   = var.s3_endpoint
+  minio_user     = var.s3_access_key
+  minio_password = var.s3_secret_key
+  minio_ssl      = true
+  minio_region   = var.s3_region
+}
 
 provider "nomad" {
   address      = "https://nomad.${var.domain_name}"
@@ -44,12 +57,16 @@ locals {
   client_pool_name     = "default"
   build_pool_name      = "build"
   clickhouse_pool_name = "clickhouse"
+
+  redis_url         = var.redis_managed ? "" : "redis.service.consul:${local.redis_port}"
+  redis_cluster_url = ""
 }
 
 module "init" {
   source = "./init"
 
   prefix         = var.prefix
+  bucket_prefix  = "${var.prefix}${var.s3_region}-"
   ssh_public_key = var.ssh_public_key
   network_zone   = var.network_zone
 }
@@ -73,6 +90,55 @@ module "cluster" {
   nomad_acl_token              = module.init.cluster.nomad_acl_token
   consul_acl_token             = module.init.cluster.consul_acl_token
   consul_gossip_encryption_key = module.init.cluster.consul_gossip_encryption_key
+  consul_dns_request_token     = module.init.cluster.consul_dns_request_token
+
+  api_cluster_size       = var.api_cluster_size
+  api_server_type        = var.api_server_type
+  api_node_pool_name     = local.api_pool_name
+  container_registry_url = var.container_registry_url
 }
 
-# TODO: module "nomad" will be added in a later step when jobs are configured
+module "nomad" {
+  source = "./nomad"
+
+  domain_name = var.domain_name
+  environment = var.environment
+
+  container_registry_url = var.container_registry_url
+  s3_endpoint            = var.s3_endpoint
+  s3_region              = var.s3_region
+
+  nomad_acl_token  = module.init.cluster.nomad_acl_token
+  consul_acl_token = module.init.cluster.consul_acl_token
+
+  api_node_pool    = local.api_pool_name
+  api_cluster_size = var.api_cluster_size
+
+  ingress_port  = local.ingress_port
+  ingress_count = var.ingress_count
+
+  client_proxy_count = var.client_proxy_count
+
+  redis_managed = var.redis_managed
+  redis_port    = local.redis_port
+  redis_url     = local.redis_url
+
+  clickhouse_cluster_size = var.clickhouse_cluster_size
+  clickhouse_username     = module.init.clickhouse.username
+  clickhouse_password     = module.init.clickhouse.password
+
+  grafana_otel_collector_token = module.init.grafana.otel_collector_token
+  grafana_otlp_url             = module.init.grafana.otlp_url
+  grafana_username             = module.init.grafana.username
+  grafana_logs_user            = module.init.grafana.logs_user
+  grafana_logs_endpoint        = module.init.grafana.logs_url
+  grafana_logs_api_key         = module.init.grafana.logs_collector_api_token
+
+  postgres_connection_string     = module.init.postgres_connection_string
+  supabase_jwt_secrets           = module.init.supabase_jwt_secrets
+  admin_token                    = module.init.admin_token
+  sandbox_access_token_hash_seed = module.init.sandbox_access_token_hash_seed
+  launch_darkly_api_key          = module.init.launch_darkly_api_key
+
+  loki_bucket_name = module.init.loki_bucket_name
+}

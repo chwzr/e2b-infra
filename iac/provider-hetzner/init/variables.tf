@@ -2,6 +2,10 @@ variable "prefix" {
   type = string
 }
 
+variable "bucket_prefix" {
+  type = string
+}
+
 variable "ssh_public_key" {
   type        = string
   description = "SSH public key for cluster node access"
