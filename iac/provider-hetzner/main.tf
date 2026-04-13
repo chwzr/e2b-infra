@@ -70,6 +70,16 @@ module "init" {
   ssh_public_key = var.ssh_public_key
   network_zone   = var.network_zone
   vswitch_id     = var.vswitch_id
+
+  postgres_connection_string       = var.postgres_connection_string
+  supabase_jwt_secrets             = var.supabase_jwt_secrets
+  launch_darkly_api_key            = var.launch_darkly_api_key
+  grafana_otlp_url                 = var.grafana_otlp_url
+  grafana_otel_collector_token     = var.grafana_otel_collector_token
+  grafana_username                 = var.grafana_username
+  grafana_logs_user                = var.grafana_logs_user
+  grafana_logs_url                 = var.grafana_logs_url
+  grafana_logs_collector_api_token = var.grafana_logs_collector_api_token
 }
 
 module "cluster" {
