@@ -15,7 +15,7 @@ resource "hcloud_zone_rrset" "wildcard" {
   zone = data.hcloud_zone.domain.name
   name = "*"
   type = "A"
-  ttl  = 3600
+  ttl  = 60
   records = [
     { value = hcloud_load_balancer.ingress.ipv4 },
   ]
