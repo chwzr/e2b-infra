@@ -35,6 +35,19 @@ ssh_public_key = ""
 # After first `make apply`, get these from the Hetzner Cloud Console > Servers > private IPs
 # consul_retry_join_ips = ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
 
+# ------------------------------------------- Build Pool (Dedicated Servers) -------------------------------------
+# Template-manager also requires KVM, so the build pool runs on dedicated servers.
+
+# Public IPs of dedicated build/template-manager servers
+# build_server_ips = ["9.10.11.12"]
+
+# Optional: separate SSH key for build servers (empty = reuse orchestrator_ssh_private_key)
+# build_ssh_private_key = <<-EOT
+# -----BEGIN OPENSSH PRIVATE KEY-----
+# ...
+# -----END OPENSSH PRIVATE KEY-----
+# EOT
+
 # ------------------------------------------- Optional (Monitoring) -----------------------------------------------
 
 # Grafana Cloud (for observability)

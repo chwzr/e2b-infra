@@ -32,8 +32,8 @@ tf_vars := HCLOUD_TOKEN=$(HCLOUD_TOKEN) \
 	$(call tfvar, API_SERVER_TYPE) \
 	$(call tfvar, CLIENT_CLUSTER_SIZE) \
 	$(call tfvar, CLIENT_SERVER_TYPE) \
-	$(call tfvar, BUILD_CLUSTER_SIZE) \
-	$(call tfvar, BUILD_SERVER_TYPE) \
+	$(call tfvar, BUILD_SERVER_IPS) \
+	$(call tfvar, BUILD_SSH_PRIVATE_KEY) \
 	$(call tfvar, CLICKHOUSE_CLUSTER_SIZE) \
 	$(call tfvar, REDIS_MANAGED)
 

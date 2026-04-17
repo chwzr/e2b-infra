@@ -56,26 +56,23 @@ module "api" {
 }
 
 module "build" {
-  source = "../modules/nodepool-client"
+  source = "../modules/nodepool-build"
+  count  = length(var.build_server_ips) > 0 ? 1 : 0
 
-  name       = "orch-build"
-  prefix     = var.prefix
-  location   = var.location
-  datacenter = var.datacenter
+  server_ips      = var.build_server_ips
+  ssh_private_key = var.build_ssh_private_key
 
-  cluster_size   = var.build_cluster_size
-  server_type    = var.build_server_type
+  vswitch_vlan_id       = var.orchestrator_vswitch_vlan_id
+  private_network_range = var.orchestrator_private_network_range
+  private_subnet_range  = var.orchestrator_private_subnet_range
+  ip_offset             = 100
+
+  consul_retry_join_ips = var.consul_retry_join_ips
+
   node_pool_name = var.build_node_pool_name
   node_labels    = var.build_node_labels
+  datacenter     = var.datacenter
 
-  base_hugepages_percentage = 60
-
-  network_id   = var.network_id
-  ssh_key_id   = var.ssh_key_id
-  firewall_ids = var.firewall_ids
-
-  cluster_tag_value            = local.cluster_tag_value
-  hcloud_token                 = var.hcloud_token
   consul_acl_token             = var.consul_acl_token
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token

@@ -108,9 +108,9 @@ module "cluster" {
   api_node_pool_name     = local.api_pool_name
   container_registry_url = var.container_registry_url
 
-  build_cluster_size   = var.build_cluster_size
-  build_server_type    = var.build_server_type
-  build_node_pool_name = local.build_pool_name
+  build_server_ips      = var.build_server_ips
+  build_ssh_private_key = var.build_ssh_private_key != "" ? var.build_ssh_private_key : var.orchestrator_ssh_private_key
+  build_node_pool_name  = local.build_pool_name
 
   clickhouse_cluster_size          = var.clickhouse_cluster_size
   clickhouse_server_type           = var.clickhouse_server_type
@@ -173,7 +173,7 @@ module "nomad" {
   loki_bucket_name = module.init.loki_bucket_name
 
   build_node_pool             = local.build_pool_name
-  build_cluster_size          = var.build_cluster_size
+  build_cluster_size          = length(var.build_server_ips)
   api_secret                  = module.init.api_secret
   fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
   template_bucket_name        = module.init.fc_template_bucket_name

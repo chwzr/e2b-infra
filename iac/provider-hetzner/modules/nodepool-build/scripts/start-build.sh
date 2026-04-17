@@ -1,52 +1,104 @@
 #!/bin/bash
-# Cloud-init script for build/client (orchestrator) nodes on Hetzner Cloud.
-# Sets up hugepages, swap, NBD, Consul client, and Nomad client.
+# Provisioning script for Hetzner dedicated servers (build / template-manager nodes).
+# Configures vSwitch VLAN interface, hugepages, swap, NBD, Consul client, Nomad client.
+# Runs via Terraform remote-exec on pre-installed Ubuntu dedicated servers.
 
 set -e
 
-exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+exec > >(tee /var/log/start-build.log) 2>&1
+echo "Starting build node setup..."
 
 # ---
-# Create orchestrator directories
+# 1. Configure vSwitch VLAN network interface
+# ---
+echo "[Configuring vSwitch VLAN interface]"
+
+# Detect primary physical NIC (first non-lo, non-virtual interface)
+PRIMARY_NIC=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | grep -v docker | grep -v veth | grep -v br- | head -1)
+echo "- Primary NIC: $PRIMARY_NIC"
+
+VLAN_IF="$PRIMARY_NIC.${VLAN_ID}"
+PRIVATE_IP="${PRIVATE_IP}"
+
+# Create VLAN interface if it doesn't exist
+if ! ip link show "$VLAN_IF" &>/dev/null; then
+  ip link add link "$PRIMARY_NIC" name "$VLAN_IF" type vlan id ${VLAN_ID}
+fi
+
+ip link set "$VLAN_IF" mtu 1400
+ip addr flush dev "$VLAN_IF" 2>/dev/null || true
+ip addr add "$PRIVATE_IP/${PRIVATE_SUBNET_CIDR}" dev "$VLAN_IF"
+ip link set "$VLAN_IF" up
+
+# Add route to Cloud Network via VLAN interface
+ip route replace ${CLOUD_NETWORK_RANGE} dev "$VLAN_IF"
+
+echo "- VLAN interface $VLAN_IF configured with IP $PRIVATE_IP"
+
+# Make persistent via netplan
+mkdir -p /etc/netplan
+cat > /etc/netplan/60-vswitch.yaml <<EOF
+network:
+  version: 2
+  vlans:
+    $VLAN_IF:
+      id: ${VLAN_ID}
+      link: $PRIMARY_NIC
+      mtu: 1400
+      addresses:
+        - $PRIVATE_IP/${PRIVATE_SUBNET_CIDR}
+      routes:
+        - to: ${CLOUD_NETWORK_RANGE}
+          scope: link
+EOF
+
+echo "- Netplan config written to /etc/netplan/60-vswitch.yaml"
+
+# ---
+# 2. Create orchestrator directories
 # ---
 mkdir -p /orchestrator /orchestrator/sandbox /orchestrator/template /orchestrator/build
 
 # ---
-# Swap (100GB)
+# 3. Swap (100GB)
 # ---
-SWAPFILE="/swapfile"
-fallocate -l 100G $SWAPFILE
-chmod 600 $SWAPFILE
-mkswap $SWAPFILE
-swapon $SWAPFILE
-echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
-sysctl vm.swappiness=10
-sysctl vm.vfs_cache_pressure=50
+if [ ! -f /swapfile ]; then
+  echo "[Setting up swap]"
+  fallocate -l 100G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  sysctl vm.swappiness=10
+  sysctl vm.vfs_cache_pressure=50
+fi
 
 # ---
-# Snapshot cache (tmpfs, 65GB)
+# 4. Snapshot cache (tmpfs, 65GB)
 # ---
 mkdir -p /mnt/snapshot-cache
-mount -t tmpfs -o size=65G tmpfs /mnt/snapshot-cache
+if ! mountpoint -q /mnt/snapshot-cache; then
+  mount -t tmpfs -o size=65G tmpfs /mnt/snapshot-cache
+fi
 
 ulimit -n 1048576
 export GOMAXPROCS=$(nproc)
 
 # ---
-# Sysctl tuning
+# 5. Sysctl tuning
 # ---
-cat >> /etc/sysctl.conf <<EOF
+cat > /etc/sysctl.d/99-orchestrator.conf <<EOF
 net.core.somaxconn = 65535
 net.core.netdev_max_backlog = 65535
 net.ipv4.tcp_max_syn_backlog = 65535
-vm.max_map_count=1048576
+vm.max_map_count = 1048576
 EOF
-sysctl -p
+sysctl --system
 
 # ---
-# NBD devices
+# 6. NBD devices
 # ---
-echo "Disabling inotify for NBD devices"
+echo "[Setting up NBD]"
 cat > /etc/udev/rules.d/97-nbd-device.rules <<EOH
 ACTION=="add|change", KERNEL=="nbd*", OPTIONS:="nowatch"
 EOH
@@ -57,12 +109,7 @@ modprobe nbd nbds_max=4096
 mkdir -p /fc-vm
 
 # ---
-# Get private IP
-# ---
-PRIVATE_IP=$(ip -4 addr show ens10 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' || hostname -I | awk '{print $1}')
-
-# ---
-# Docker config with custom registry
+# 7. Docker config
 # ---
 mkdir -p /root/docker
 %{ if CONTAINER_REGISTRY_URL != "" }
@@ -78,23 +125,11 @@ echo '{}' > /root/docker/config.json
 %{ endif }
 
 # ---
-# Consul DNS via systemd-resolved
-# ---
-mkdir -p /etc/systemd/resolved.conf.d/
-cat > /etc/systemd/resolved.conf.d/consul.conf <<EOF
-[Resolve]
-DNS=127.0.0.1:8600
-DNSSEC=false
-DNSStubListener=yes
-DNSStubListenerExtra=172.17.0.1
-EOF
-
-# ---
-# Hugepages setup
+# 8. Hugepages setup
 # ---
 echo "[Setting up huge pages]"
 mkdir -p /mnt/hugepages
-mount -t hugetlbfs none /mnt/hugepages
+mountpoint -q /mnt/hugepages || mount -t hugetlbfs none /mnt/hugepages
 
 available_ram=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 available_ram=$(($available_ram / 1024))
@@ -107,19 +142,16 @@ max_normal_ram=$((42 * 1024))
 max() { if (($1 > $2)); then echo "$1"; else echo "$2"; fi; }
 min() { if (($1 < $2)); then echo "$1"; else echo "$2"; fi; }
 ensure_even() { if (($1 % 2 == 0)); then echo "$1"; else echo $(($1 - 1)); fi; }
-remove_decimal() { echo "$(echo $1 | sed 's/\..*//') "; }
+remove_decimal() { echo "$1" | sed 's/\..*//'; }
 
 reserved_normal_ram=$(max $min_normal_ram $min_normal_percentage_ram)
 reserved_normal_ram=$(min $reserved_normal_ram $max_normal_ram)
-echo "- Reserved RAM: $reserved_normal_ram MiB"
 
 hugepages_ram=$(($available_ram - $reserved_normal_ram))
 hugepages_ram=$(remove_decimal $hugepages_ram)
 hugepages_ram=$(ensure_even $hugepages_ram)
-echo "- RAM for hugepages: $hugepages_ram MiB"
 
 hugepage_size_in_mib=2
-echo "- Huge page size: $hugepage_size_in_mib MiB"
 hugepages=$(($hugepages_ram / $hugepage_size_in_mib))
 
 base_hugepages_percentage=${BASE_HUGEPAGES_PERCENTAGE}
@@ -135,8 +167,21 @@ echo "- Allocating $overcommitment_hugepages huge pages ($overcommitment_hugepag
 echo $overcommitment_hugepages > /proc/sys/vm/nr_overcommit_hugepages
 
 # ---
-# Consul Client
+# 9. Consul DNS via systemd-resolved
 # ---
+mkdir -p /etc/systemd/resolved.conf.d/
+cat > /etc/systemd/resolved.conf.d/consul.conf <<EOF
+[Resolve]
+DNS=127.0.0.1:8600
+DNSSEC=false
+DNSStubListener=yes
+DNSStubListenerExtra=172.17.0.1
+EOF
+
+# ---
+# 10. Consul Client
+# ---
+echo "[Starting Consul client]"
 mkdir -p /opt/consul/config /opt/consul/data
 
 cat > /opt/consul/config/default.json <<EOF
@@ -156,7 +201,7 @@ cat > /opt/consul/config/default.json <<EOF
   "datacenter": "${DATACENTER}",
   "node_name": "$(hostname)",
   "leave_on_terminate": true,
-  "retry_join": ["provider=hcloud tag_name=cluster tag_value=${CLUSTER_TAG_VALUE} token=${HCLOUD_TOKEN}"],
+  "retry_join": ${CONSUL_RETRY_JOIN},
   "server": false,
   "encrypt": "${CONSUL_GOSSIP_ENCRYPTION_KEY}",
   "ui": false
@@ -185,10 +230,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable consul.service
-systemctl start consul.service
+systemctl restart consul.service
 
 # Wait for Consul DNS
-echo "- Waiting for Consul DNS to start on port 8600..."
+echo "- Waiting for Consul DNS on port 8600..."
 for i in $(seq 1 60); do
   if nc -z 127.0.0.1 8600 2>/dev/null; then
     echo "- Consul DNS is ready (attempt $i/60)"
@@ -201,11 +246,10 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# Restart systemd-resolved after Consul is up
 systemctl restart systemd-resolved
 for i in $(seq 1 60); do
   if host google.com 2>/dev/null; then
-    echo "- DNS resolving is ready (attempt $i/60)"
+    echo "- DNS resolving is ready"
     break
   fi
   sleep 1
@@ -213,8 +257,9 @@ done
 resolvectl flush-caches
 
 # ---
-# Nomad Client
+# 11. Nomad Client
 # ---
+echo "[Starting Nomad client]"
 mkdir -p /opt/nomad/config /opt/nomad/data /opt/nomad/log /opt/nomad/plugins
 
 cat > /opt/nomad/config/default.hcl <<EOF
@@ -313,6 +358,6 @@ EOF
 
 systemctl daemon-reload
 systemctl enable nomad.service
-systemctl start nomad.service
+systemctl restart nomad.service
 
-echo "Client node setup complete."
+echo "Build node setup complete."

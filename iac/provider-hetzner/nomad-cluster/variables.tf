@@ -77,14 +77,15 @@ variable "container_registry_url" {
 // Build Node Pool
 // ---
 
-variable "build_cluster_size" {
-  type    = number
-  default = 1
+variable "build_server_ips" {
+  type    = list(string)
+  default = []
 }
 
-variable "build_server_type" {
-  type    = string
-  default = "ccx33"
+variable "build_ssh_private_key" {
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "build_node_pool_name" {

@@ -111,16 +111,6 @@ variable "client_server_type" {
   default = "cx52"
 }
 
-variable "build_cluster_size" {
-  type    = number
-  default = 1
-}
-
-variable "build_server_type" {
-  type    = string
-  default = "cx42"
-}
-
 variable "clickhouse_cluster_size" {
   type    = number
   default = 1
@@ -179,6 +169,23 @@ variable "consul_retry_join_ips" {
   type        = list(string)
   default     = []
   description = "Private IPs of Consul server nodes for dedicated server retry_join"
+}
+
+// ---
+// Build Pool (Hetzner Dedicated Servers)
+// ---
+
+variable "build_server_ips" {
+  type        = list(string)
+  default     = []
+  description = "Public IPs of dedicated servers for the build/template-manager pool"
+}
+
+variable "build_ssh_private_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "SSH private key for build server access (falls back to orchestrator_ssh_private_key if empty)"
 }
 
 // ---

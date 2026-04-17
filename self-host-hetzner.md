@@ -43,22 +43,24 @@ Recommended for monitoring and logging:
 
 The Hetzner deployment uses a hybrid approach:
 
-- **Hetzner Cloud VMs** for control servers, API nodes, build nodes, and ClickHouse
-- **Hetzner Robot Dedicated Servers** for Firecracker orchestrator nodes (Cloud VMs don't support KVM nested virtualization)
+- **Hetzner Cloud VMs** for control servers, API nodes, and ClickHouse
+- **Hetzner Robot Dedicated Servers** for Firecracker orchestrator **and build (template-manager)** nodes (Cloud VMs don't support KVM nested virtualization)
 - **Hetzner Cloud Network + vSwitch** to connect Cloud VMs and dedicated servers on a private network
 - **Hetzner Object Storage** (S3-compatible) for templates, kernels, logs, and backups
 - **Hetzner DNS** for domain management
 
 ```
 Cloud Network (10.0.0.0/8)
-├── Subnet 10.0.0.0/24 (cloud) ── Control Servers, API, Build, ClickHouse
-└── Subnet 10.0.1.0/24 (vswitch) ── Dedicated Servers (Orchestrator/Firecracker)
+├── Subnet 10.0.0.0/24 (cloud)   ── Control Servers, API, ClickHouse
+└── Subnet 10.0.1.0/24 (vswitch) ── Dedicated Servers
+                                      ├── .2+    Orchestrator (Firecracker)
+                                      └── .100+  Build (template-manager)
 ```
 
 **Node Pools:**
 - **Control Server** - Nomad/Consul servers (default: 3x `cx32`)
 - **API** - API server, ingress, client proxy, otel, loki, logs collector (default: `cx32`)
-- **Build** - Template manager for building sandbox templates (default: `ccx33`)
+- **Build** - Template manager for building sandbox templates on dedicated servers (manually provisioned, requires KVM)
 - **ClickHouse** - Analytics database with persistent volumes (default: `cx32`)
 - **Orchestrator** - Firecracker VM orchestrator on dedicated servers (manually provisioned)
 
@@ -88,21 +90,22 @@ Before running Terraform, you need to set up a few things manually in Hetzner:
 2. Add your domain (or ensure it's already managed there)
 3. Point your domain's nameservers to Hetzner DNS if not already
 
-### 1.4 Dedicated Servers (for Orchestrator)
+### 1.4 Dedicated Servers (for Orchestrator and Build)
 
-Firecracker requires bare-metal KVM access, which Hetzner Cloud VMs don't provide. You need dedicated servers from [Hetzner Robot](https://robot.hetzner.com/).
+Firecracker requires bare-metal KVM access, which Hetzner Cloud VMs don't provide. You need dedicated servers from [Hetzner Robot](https://robot.hetzner.com/) for **both** the orchestrator pool (running sandboxes) and the build pool (template-manager — builds sandbox templates using Firecracker).
 
-1. Order one or more dedicated servers via [Hetzner Robot](https://robot.hetzner.com/server/order)
-   - Recommended: servers with high RAM and fast NVMe storage
+1. Order dedicated servers via [Hetzner Robot](https://robot.hetzner.com/server/order)
+   - **Orchestrator** servers: high RAM, fast NVMe (sandbox workloads)
+   - **Build** servers: moderate RAM, fast I/O (template build workloads) — at least one
    - Install **Ubuntu 24.04** as the operating system
 2. Ensure SSH root access works with your SSH key
-3. Note the **public IPs** of each server
+3. Note the **public IPs** of each server — they'll go into `ORCHESTRATOR_SERVER_IPS` and `BUILD_SERVER_IPS` (disjoint lists)
 
 ### 1.5 vSwitch (connects dedicated servers to Cloud Network)
 
 1. In [Hetzner Robot](https://robot.hetzner.com/) > **vSwitches** > **Create vSwitch**
 2. Select VLAN ID (default: `4000`)
-3. Attach your dedicated servers to the vSwitch
+3. Attach **all** dedicated servers (orchestrator + build) to the same vSwitch — they share the VLAN and `10.0.1.0/24` subnet, with orchestrator IPs starting at `.2` and build IPs at `.100` to avoid collision
 4. Note the **vSwitch ID** — Terraform will create a Cloud Network subnet linked to it
 
 ### 1.6 Container Registry
@@ -242,11 +245,11 @@ make apply
 This provisions:
 - Control server nodes (Nomad/Consul cluster)
 - API nodes
-- Build nodes
 - ClickHouse nodes with persistent volumes
 - Load balancer with DNS records
 - Firewall rules
 - Orchestrator bootstrap on dedicated servers (VLAN interface, Consul, Nomad)
+- Build (template-manager) bootstrap on dedicated servers (VLAN interface, Consul, Nomad)
 
 ---
 
@@ -260,7 +263,7 @@ make apply
 This deploys all Nomad jobs:
 - API, ingress (Traefik), client proxy
 - Orchestrator (on dedicated servers)
-- Template manager (on build nodes)
+- Template manager (on dedicated build servers)
 - ClickHouse, Loki, OTEL collector, logs collector
 - Redis (in-cluster, unless managed Redis is configured)
 
@@ -289,8 +292,8 @@ make seed-db
 ### Networking
 
 - **Cloud Network** (`10.0.0.0/8`): Private network connecting all Hetzner Cloud VMs
-- **Cloud Subnet** (`10.0.0.0/24`): For Cloud VMs (control, API, build, ClickHouse)
-- **vSwitch Subnet** (`10.0.1.0/24`): Bridges Cloud Network to dedicated servers via Hetzner Robot vSwitch
+- **Cloud Subnet** (`10.0.0.0/24`): For Cloud VMs (control, API, ClickHouse)
+- **vSwitch Subnet** (`10.0.1.0/24`): Bridges Cloud Network to dedicated servers (orchestrator at `.2+`, build at `.100+`) via Hetzner Robot vSwitch
 - **VLAN Interface**: Dedicated servers get a VLAN sub-interface (e.g. `eno1.4000`) with MTU 1400
 - **Service Discovery**: Consul DNS (`.consul` domain) for all inter-service communication
 
@@ -312,8 +315,8 @@ All Cloud VM server types can be customized via `.env` variables or `.tfvars`. D
 | `CONTROL_SERVER_TYPE` | `cx32` | Server type for control nodes | Shared vCPU is fine for control plane |
 | `API_CLUSTER_SIZE` | `1` | Number of API nodes | Scale up for HA (2+) |
 | `API_SERVER_TYPE` | `cx32` | Server type for API nodes | |
-| `BUILD_CLUSTER_SIZE` | `1` | Number of build (template manager) nodes | Scale for parallel template builds |
-| `BUILD_SERVER_TYPE` | `ccx33` | Server type for build nodes | **Must use dedicated vCPU** (`ccx*`) for nested virtualization |
+| `BUILD_SERVER_IPS` | _(empty)_ | Comma-separated public IPs of dedicated build servers | Required — template-manager needs KVM (Cloud VMs unsupported) |
+| `BUILD_SSH_PRIVATE_KEY` | _(empty)_ | SSH private key for build server access | Optional — falls back to `ORCHESTRATOR_SSH_PRIVATE_KEY` |
 | `CLICKHOUSE_CLUSTER_SIZE` | `1` | Number of ClickHouse nodes | Each gets a persistent volume |
 | `CLICKHOUSE_SERVER_TYPE` | `cx32` | Server type for ClickHouse nodes | Scale CPU/RAM for analytics workload |
 
@@ -332,7 +335,7 @@ All Cloud VM server types can be customized via `.env` variables or `.tfvars`. D
 | `ccx53` | 32 | 128 GB | 600 GB | Dedicated vCPU (AMD) |
 | `ccx63` | 48 | 192 GB | 960 GB | Dedicated vCPU (AMD) |
 
-> **Important:** Build nodes **must** use dedicated vCPU types (`ccx*`) because template building requires nested virtualization. Control, API, and ClickHouse nodes can use shared vCPU (`cx*`) types.
+> **Important:** Template building requires nested virtualization (KVM), which Hetzner Cloud VMs do not support. The build pool must therefore run on **dedicated servers** (set via `BUILD_SERVER_IPS`), same as the orchestrator pool. Control, API, and ClickHouse nodes can use shared vCPU (`cx*`) Cloud VMs.
 
 > Full and up-to-date list: [Hetzner Cloud Pricing](https://www.hetzner.com/cloud/)
 
@@ -342,8 +345,8 @@ CONTROL_SERVER_CLUSTER_SIZE=3
 CONTROL_SERVER_TYPE=cx32
 API_CLUSTER_SIZE=2
 API_SERVER_TYPE=cx42
-BUILD_CLUSTER_SIZE=2
-BUILD_SERVER_TYPE=ccx33
+# Build (template-manager) runs on dedicated servers — list their public IPs:
+BUILD_SERVER_IPS=9.10.11.12,13.14.15.16
 CLICKHOUSE_CLUSTER_SIZE=1
 CLICKHOUSE_SERVER_TYPE=cx42
 ```
