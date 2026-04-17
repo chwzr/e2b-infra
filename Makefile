@@ -6,6 +6,8 @@ PROVIDER ?= gcp
 
 AWS_BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
 GCP_BUCKET_PREFIX ?= $(GCP_PROJECT_ID)-
+# Proxmox/Hetzner: S3-compatible bucket naming matches init/buckets.tf (bucket_prefix = $${prefix}$${s3_region}-)
+S3_BUCKET_PREFIX ?= $(PREFIX)$(S3_REGION)-
 
 .PHONY: provider-login
 provider-login:
@@ -112,6 +114,15 @@ ifeq ($(PROVIDER),aws)
 	aws s3 cp s3://e2b-prod-public-builds/firecrackers/ ./.firecrackers/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
 	aws s3 cp ./.kernels/ s3://${AWS_BUCKET_PREFIX}fc-kernels/ --recursive --profile ${AWS_PROFILE}
 	aws s3 cp ./.firecrackers/ s3://${AWS_BUCKET_PREFIX}fc-versions/ --recursive --profile ${AWS_PROFILE}
+	rm -rf ./.kernels
+	rm -rf ./.firecrackers
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+	mkdir -p ./.kernels
+	mkdir -p ./.firecrackers
+	aws s3 cp s3://e2b-prod-public-builds/kernels/ ./.kernels/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
+	aws s3 cp s3://e2b-prod-public-builds/firecrackers/ ./.firecrackers/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
+	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) aws s3 cp ./.kernels/ s3://$(S3_BUCKET_PREFIX)fc-kernels/ --recursive --endpoint-url https://$(S3_ENDPOINT)
+	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) aws s3 cp ./.firecrackers/ s3://$(S3_BUCKET_PREFIX)fc-versions/ --recursive --endpoint-url https://$(S3_ENDPOINT)
 	rm -rf ./.kernels
 	rm -rf ./.firecrackers
 else
