@@ -48,6 +48,12 @@ variable "template_storage" {
   description = "Proxmox storage pool for template disk"
 }
 
+variable "disk_format" {
+  type        = string
+  default     = "raw"
+  description = "Disk format for the template disk. Use 'raw' for block-backed storage (local-lvm, local-zfs, ceph-rbd). Use 'qcow2' only for file-based storage (dir, nfs, cifs)."
+}
+
 variable "packer_build_bridge" {
   type        = string
   default     = "vmbr0"

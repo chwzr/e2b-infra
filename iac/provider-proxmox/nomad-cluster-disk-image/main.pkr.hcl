@@ -33,7 +33,7 @@ source "proxmox-iso" "ubuntu" {
     disk_size    = "20G"
     storage_pool = var.template_storage
     type         = "scsi"
-    format       = "qcow2"
+    format       = var.disk_format
     io_thread    = true
   }
 
