@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     proxmox = {
-      source = "Telmate/proxmox"
+      source = "bpg/proxmox"
     }
     null = {
       source = "hashicorp/null"
@@ -10,59 +10,74 @@ terraform {
 }
 
 locals {
-  private_mask = split("/", var.private_subnet_cidr)[1]
-  private_ip   = cidrhost(var.private_subnet_cidr, var.private_ip_offset)
+  subnet_mask = split("/", var.subnet_cidr)[1]
+  private_ip  = cidrhost(var.subnet_cidr, var.ip_offset)
 }
 
-resource "proxmox_vm_qemu" "ingress" {
-  name        = "${var.prefix}ingress"
-  target_node = var.pve_node
-  clone       = var.base_template
-  full_clone  = true
+resource "proxmox_virtual_environment_vm" "ingress" {
+  name      = "${var.prefix}ingress"
+  node_name = var.pve_node
+  on_boot   = true
 
-  agent    = 1
-  os_type  = "cloud-init"
-  cpu      = "host"
-  cores    = var.cpu_cores
-  sockets  = 1
-  memory   = var.memory_mb
-  scsihw   = "virtio-scsi-pci"
-  bootdisk = "scsi0"
-  onboot   = true
+  agent {
+    enabled = true
+  }
+
+  clone {
+    vm_id = var.base_template_vm_id
+    full  = true
+  }
+
+  cpu {
+    type    = "host"
+    sockets = 1
+    cores   = var.cpu_cores
+  }
+
+  memory {
+    dedicated = var.memory_mb
+  }
+
+  scsi_hardware = "virtio-scsi-pci"
+  boot_order    = ["scsi0"]
 
   disk {
-    slot     = 0
-    type     = "scsi"
-    storage  = var.pve_storage_pool
-    size     = "${var.disk_size_gb}G"
-    iothread = 1
+    interface    = "scsi0"
+    datastore_id = var.pve_storage_pool
+    size         = var.disk_size_gb
+    iothread     = true
   }
 
-  # NIC 0 — public bridge (default gateway, ingress traffic)
-  network {
-    bridge = var.public_bridge
+  network_device {
+    bridge = var.bridge
     model  = "virtio"
+    mtu    = 1500
   }
 
-  # NIC 1 — private bridge (cluster traffic)
-  network {
-    bridge = var.private_bridge
-    model  = "virtio"
-  }
+  initialization {
+    datastore_id = var.pve_storage_pool
 
-  ipconfig0  = "ip=${var.public_ip}/${var.public_cidr_bit},gw=${var.public_gateway}"
-  ipconfig1  = "ip=${local.private_ip}/${local.private_mask}"
-  nameserver = join(" ", var.private_dns_servers)
-  ciuser     = "root"
-  sshkeys    = var.ssh_public_key
+    user_account {
+      username = "root"
+      keys     = [var.ssh_public_key]
+    }
+
+    ip_config {
+      ipv4 {
+        address = "${local.private_ip}/${local.subnet_mask}"
+        gateway = var.gateway_ip
+      }
+    }
+
+    dns {
+      servers = var.dns_servers
+    }
+  }
 
   lifecycle {
     ignore_changes = [
-      network,
-      ciuser,
-      sshkeys,
-      ipconfig0,
-      ipconfig1,
+      initialization,
+      network_device,
     ]
   }
 }
@@ -70,7 +85,7 @@ resource "proxmox_vm_qemu" "ingress" {
 resource "null_resource" "bootstrap" {
   triggers = {
     script_hash = filesha256("${path.module}/scripts/start-ingress.sh")
-    vm_id       = proxmox_vm_qemu.ingress.id
+    vm_id       = proxmox_virtual_environment_vm.ingress.id
   }
 
   connection {
@@ -102,5 +117,5 @@ resource "null_resource" "bootstrap" {
     ]
   }
 
-  depends_on = [proxmox_vm_qemu.ingress]
+  depends_on = [proxmox_virtual_environment_vm.ingress]
 }

@@ -31,13 +31,10 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, PVE_NODE) \
 	$(call tfvar, PVE_STORAGE_POOL) \
 	$(call tfvar, BASE_TEMPLATE) \
-	$(call tfvar, PUBLIC_BRIDGE) \
-	$(call tfvar, PRIVATE_BRIDGE) \
-	$(call tfvar, PRIVATE_SUBNET_CIDR) \
-	$(call tfvar, PRIVATE_GATEWAY_IP) \
-	$(call tfvar, INGRESS_PUBLIC_IP) \
-	$(call tfvar, INGRESS_PUBLIC_GATEWAY) \
-	$(call tfvar, INGRESS_PUBLIC_CIDR_BIT) \
+	$(call tfvar, BASE_TEMPLATE_VM_ID) \
+	$(call tfvar, BRIDGE) \
+	$(call tfvar, SUBNET_CIDR) \
+	$(call tfvar, GATEWAY_IP) \
 	$(call tfvar, SSH_PUBLIC_KEY) \
 	$(call tfvar, SSH_PRIVATE_KEY) \
 	$(call tfvar, CONTROL_SERVER_CLUSTER_SIZE) \

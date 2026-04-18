@@ -37,6 +37,11 @@ variable "template_name" {
   description = "Name of the resulting VM template — referenced as var.base_template in Terraform"
 }
 
+variable "vm_id" {
+  type        = number
+  description = "Numeric PVE VM ID to assign to the resulting template. The bpg/proxmox Terraform provider clones by VM ID, so this MUST match BASE_TEMPLATE_VM_ID in the Terraform .env. Pick any unused ID (e.g. 9000)."
+}
+
 variable "template_storage" {
   type        = string
   default     = "local-lvm"

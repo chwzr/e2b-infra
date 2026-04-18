@@ -10,10 +10,6 @@ output "ingress_private_ip" {
   value = module.ingress.private_ip
 }
 
-output "ingress_public_ip" {
-  value = module.ingress.public_ip
-}
-
 output "orchestrator_private_ips" {
   value = module.orchestrator.private_ips
 }

@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     proxmox = {
-      source  = "Telmate/proxmox"
-      version = "~> 2.9"
+      source  = "bpg/proxmox"
+      version = "~> 0.82"
     }
 
     nomad = {
@@ -38,10 +38,9 @@ terraform {
 }
 
 provider "proxmox" {
-  pm_api_url          = var.proxmox_api_url
-  pm_api_token_id     = var.proxmox_api_token_id
-  pm_api_token_secret = var.proxmox_api_token_secret
-  pm_tls_insecure     = var.proxmox_tls_insecure
+  endpoint  = var.proxmox_api_url
+  api_token = "${var.proxmox_api_token_id}=${var.proxmox_api_token_secret}"
+  insecure  = var.proxmox_tls_insecure
 }
 
 provider "minio" {
@@ -96,19 +95,15 @@ module "cluster" {
   prefix     = var.prefix
   datacenter = var.datacenter
 
-  pve_node         = var.pve_node
-  pve_storage_pool = var.pve_storage_pool
-  base_template    = var.base_template
+  pve_node            = var.pve_node
+  pve_storage_pool    = var.pve_storage_pool
+  base_template       = var.base_template
+  base_template_vm_id = var.base_template_vm_id
 
-  public_bridge       = var.public_bridge
-  private_bridge      = var.private_bridge
-  private_subnet_cidr = var.private_subnet_cidr
-  private_gateway_ip  = var.private_gateway_ip
-  private_dns_servers = var.private_dns_servers
-
-  ingress_public_ip       = var.ingress_public_ip
-  ingress_public_gateway  = var.ingress_public_gateway
-  ingress_public_cidr_bit = var.ingress_public_cidr_bit
+  bridge      = var.bridge
+  subnet_cidr = var.subnet_cidr
+  gateway_ip  = var.gateway_ip
+  dns_servers = var.dns_servers
 
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key

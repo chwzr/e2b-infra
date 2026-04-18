@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     proxmox = {
-      source = "Telmate/proxmox"
+      source = "bpg/proxmox"
     }
     null = {
       source = "hashicorp/null"
@@ -10,55 +10,79 @@ terraform {
 }
 
 locals {
-  subnet_mask = split("/", var.private_subnet_cidr)[1]
-  private_ips = [for i in range(var.cluster_size) : cidrhost(var.private_subnet_cidr, var.ip_offset + i)]
+  subnet_mask = split("/", var.subnet_cidr)[1]
+  private_ips = [for i in range(var.cluster_size) : cidrhost(var.subnet_cidr, var.ip_offset + i)]
 }
 
-resource "proxmox_vm_qemu" "orchestrator" {
+resource "proxmox_virtual_environment_vm" "orchestrator" {
   count = var.cluster_size
 
-  name        = "${var.prefix}orchestrator-${count.index}"
-  target_node = var.pve_node
-  clone       = var.base_template
-  full_clone  = true
+  name      = "${var.prefix}orchestrator-${count.index}"
+  node_name = var.pve_node
+  on_boot   = true
 
-  agent   = 1
-  os_type = "cloud-init"
-  # Nested KVM: cpu = "host" passes the full CPU model through so Firecracker
+  agent {
+    enabled = true
+  }
+
+  clone {
+    vm_id = var.base_template_vm_id
+    full  = true
+  }
+
+  # Nested KVM: cpu.type = "host" passes the full CPU model through so Firecracker
   # can see KVM inside the VM. The Proxmox host must have nested virt enabled
   # (/sys/module/kvm_intel/parameters/nested = Y or kvm_amd).
-  cpu      = "host"
-  cores    = var.cpu_cores
-  sockets  = 1
-  memory   = var.memory_mb
-  scsihw   = "virtio-scsi-pci"
-  bootdisk = "scsi0"
-  onboot   = true
+  cpu {
+    type    = "host"
+    sockets = 1
+    cores   = var.cpu_cores
+  }
+
+  memory {
+    dedicated = var.memory_mb
+  }
+
+  scsi_hardware = "virtio-scsi-pci"
+  boot_order    = ["scsi0"]
 
   disk {
-    slot     = 0
-    type     = "scsi"
-    storage  = var.pve_storage_pool
-    size     = "${var.disk_size_gb}G"
-    iothread = 1
+    interface    = "scsi0"
+    datastore_id = var.pve_storage_pool
+    size         = var.disk_size_gb
+    iothread     = true
   }
 
-  network {
-    bridge = var.private_bridge
+  network_device {
+    bridge = var.bridge
     model  = "virtio"
+    mtu    = 1500
   }
 
-  ipconfig0  = "ip=${local.private_ips[count.index]}/${local.subnet_mask},gw=${var.private_gateway_ip}"
-  nameserver = join(" ", var.private_dns_servers)
-  ciuser     = "root"
-  sshkeys    = var.ssh_public_key
+  initialization {
+    datastore_id = var.pve_storage_pool
+
+    user_account {
+      username = "root"
+      keys     = [var.ssh_public_key]
+    }
+
+    ip_config {
+      ipv4 {
+        address = "${local.private_ips[count.index]}/${local.subnet_mask}"
+        gateway = var.gateway_ip
+      }
+    }
+
+    dns {
+      servers = var.dns_servers
+    }
+  }
 
   lifecycle {
     ignore_changes = [
-      network,
-      ciuser,
-      sshkeys,
-      ipconfig0,
+      initialization,
+      network_device,
     ]
   }
 }
@@ -68,7 +92,7 @@ resource "null_resource" "bootstrap" {
 
   triggers = {
     script_hash = filesha256("${path.module}/scripts/start-orchestrator.sh")
-    vm_id       = proxmox_vm_qemu.orchestrator[count.index].id
+    vm_id       = proxmox_virtual_environment_vm.orchestrator[count.index].id
   }
 
   connection {
@@ -102,5 +126,5 @@ resource "null_resource" "bootstrap" {
     ]
   }
 
-  depends_on = [proxmox_vm_qemu.orchestrator]
+  depends_on = [proxmox_virtual_environment_vm.orchestrator]
 }

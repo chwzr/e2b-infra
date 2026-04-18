@@ -17,6 +17,7 @@ source "proxmox-iso" "ubuntu" {
   insecure_skip_tls_verify = var.proxmox_tls_insecure
 
   node                 = var.proxmox_node
+  vm_id                = var.vm_id
   vm_name              = "${var.template_name}-${formatdate("YYYY-MM-DD-hh-mm-ss", timestamp())}"
   template_name        = var.template_name
   template_description = "E2B Nomad cluster base image (Ubuntu 24.04) built by Packer"

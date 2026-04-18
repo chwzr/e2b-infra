@@ -14,6 +14,10 @@ variable "base_template" {
   type = string
 }
 
+variable "base_template_vm_id" {
+  type = number
+}
+
 variable "cpu_cores" {
   type    = number
   default = 2
@@ -29,47 +33,27 @@ variable "disk_size_gb" {
   default = 20
 }
 
-variable "public_bridge" {
+variable "bridge" {
   type = string
 }
 
-variable "private_bridge" {
+variable "subnet_cidr" {
   type = string
 }
 
-variable "private_subnet_cidr" {
+variable "gateway_ip" {
   type = string
 }
 
-variable "private_gateway_ip" {
-  type = string
-}
-
-variable "private_dns_servers" {
+variable "dns_servers" {
   type    = list(string)
   default = ["1.1.1.1", "8.8.8.8"]
 }
 
-variable "private_ip_offset" {
+variable "ip_offset" {
   type        = number
   default     = 41
   description = "Private IP offset for the ingress VM (single VM)"
-}
-
-variable "public_ip" {
-  type        = string
-  description = "Public IPv4 for the ingress VM's public NIC"
-}
-
-variable "public_gateway" {
-  type        = string
-  description = "Default gateway on the public bridge"
-}
-
-variable "public_cidr_bit" {
-  type        = number
-  default     = 24
-  description = "CIDR mask length for the public IP"
 }
 
 variable "node_pool_name" {

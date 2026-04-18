@@ -19,6 +19,10 @@ variable "base_template" {
   type = string
 }
 
+variable "base_template_vm_id" {
+  type = number
+}
+
 variable "cpu_cores" {
   type    = number
   default = 8
@@ -34,19 +38,19 @@ variable "disk_size_gb" {
   default = 100
 }
 
-variable "private_bridge" {
+variable "bridge" {
   type = string
 }
 
-variable "private_subnet_cidr" {
+variable "subnet_cidr" {
   type = string
 }
 
-variable "private_gateway_ip" {
+variable "gateway_ip" {
   type = string
 }
 
-variable "private_dns_servers" {
+variable "dns_servers" {
   type    = list(string)
   default = ["1.1.1.1", "8.8.8.8"]
 }

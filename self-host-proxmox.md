@@ -3,8 +3,9 @@
 Deploy E2B on a Proxmox VE host, with VMs provisioned by Terraform and a base
 image built by Packer. Object storage and Terraform state use Hetzner Object
 Storage (or any S3-compatible service); DNS is managed manually in your provider
-of choice. All cluster traffic stays on a private Proxmox bridge except for a
-single Traefik ingress VM that has a public IP.
+of choice. All VMs — including the Traefik ingress VM — live on a single
+private Proxmox bridge; external HTTPS traffic reaches the cluster via a
+DNAT rule on the PVE host (the host is the only thing with a public IP).
 
 ## Prerequisites
 
@@ -33,9 +34,9 @@ single Traefik ingress VM that has a public IP.
 
 **Accounts & Services**
 
-- A Proxmox VE host (7.x or 8.x) with:
+- A Proxmox VE host (7.x, 8.x, or 9.x) with:
   - Nested virtualization enabled on the host CPU (`/sys/module/kvm_intel/parameters/nested = Y`, or `kvm_amd` on AMD)
-  - Two pre-configured Linux bridges: one public (e.g. `vmbr0`) and one private (e.g. `vmbr1`) with host-side masquerade/NAT for egress — see [Hetzner's vSwitch + public subnet guide](https://community.hetzner.com/tutorials/install-and-configure-proxmox_ve#23-vswitch-with-a-public-subnet) for one working setup
+  - One pre-configured Linux bridge (e.g. `vmbr1`) for the cluster subnet, with the PVE host acting as gateway and performing MASQUERADE for egress. A public uplink on the host (typically `vmbr0`) is used only by the PVE host itself, which DNATs 80/443 to the ingress VM.
   - An Ubuntu 24.04 Server ISO uploaded to the PVE ISO storage
   - An API token with VM + storage + ISO privileges
 - An S3-compatible object storage (Hetzner Object Storage or self-hosted MinIO) with an **already-provisioned** bucket for Terraform state
@@ -49,34 +50,39 @@ single Traefik ingress VM that has a public IP.
 
 ## Architecture Overview
 
-Single Proxmox host; every node pool is a `proxmox_vm_qemu` VM cloned from one
-Packer-built Ubuntu 24.04 template. Only the ingress VM has a public IP.
+Single Proxmox host; every node pool is a `proxmox_virtual_environment_vm`
+cloned from one Packer-built Ubuntu 24.04 template. No VM has a public IP.
 
 ```
-Proxmox host
-├── vmbr0 (public)   ── Ingress VM public NIC
-└── vmbr1 (private, 10.0.0.0/24)
-     ├── .11-.13  Control servers (Nomad/Consul)
-     ├── .21+     API nodes
-     ├── .31+     ClickHouse
-     ├── .41      Ingress VM private NIC (Traefik)
-     ├── .51+     Orchestrator (Firecracker, nested KVM)
-     └── .101+    Build / template-manager (nested KVM)
+Internet
+   │
+   ▼
+Proxmox host (public IP)
+   │  iptables DNAT 80/443 → 10.0.0.41:8080 (ingress VM)
+   │
+   └── vmbr1 (cluster bridge, 10.0.0.0/24)
+        ├── .11-.13  Control servers (Nomad/Consul)
+        ├── .21+     API nodes
+        ├── .31+     ClickHouse
+        ├── .41      Ingress VM (Traefik)
+        ├── .51+     Orchestrator (Firecracker, nested KVM)
+        └── .101+    Build / template-manager (nested KVM)
 ```
 
 **Node Pools**
 
-| Pool             | Role                                                              | Nested KVM | Public IP |
-|------------------|-------------------------------------------------------------------|------------|-----------|
-| `control-server` | Nomad + Consul servers                                             | no         | no        |
-| `api`            | API, client-proxy, OTEL, Loki, logs collector                      | no         | no        |
-| `ingress`        | Traefik only — terminates all external traffic                     | no         | **yes**   |
-| `orchestrator`   | Firecracker sandbox runner                                         | **yes**    | no        |
-| `build`          | Template-manager (builds sandbox templates with Firecracker)       | **yes**    | no        |
-| `clickhouse`     | Analytics DB, second virtio disk mounted at `/clickhouse`          | no         | no        |
+| Pool             | Role                                                              | Nested KVM |
+|------------------|-------------------------------------------------------------------|------------|
+| `control-server` | Nomad + Consul servers                                             | no         |
+| `api`            | API, client-proxy, OTEL, Loki, logs collector                      | no         |
+| `ingress`        | Traefik only — terminates all external traffic (reached via DNAT)  | no         |
+| `orchestrator`   | Firecracker sandbox runner                                         | **yes**    |
+| `build`          | Template-manager (builds sandbox templates with Firecracker)       | **yes**    |
+| `clickhouse`     | Analytics DB, second virtio disk mounted at `/clickhouse`          | no         |
 
-Traffic flow: client → DNS → ingress VM's public IP → Traefik (Nomad job on the
-`ingress` pool) → internal service via Consul Catalog over the private bridge.
+Traffic flow: client → DNS → PVE host's public IP → host DNAT → Traefik on
+ingress VM (`10.0.0.41:8080`) → internal service via Consul Catalog over the
+cluster bridge.
 
 ---
 
@@ -84,7 +90,7 @@ Traffic flow: client → DNS → ingress VM's public IP → Traefik (Nomad job o
 
 ### 1.1 Proxmox host
 
-1. Install Proxmox VE 7.x or 8.x on your hardware.
+1. Install Proxmox VE 7.x, 8.x, or 9.x on your hardware.
 2. **Enable nested virtualization** on the host. On Intel:
    ```sh
    echo "options kvm-intel nested=Y" > /etc/modprobe.d/kvm-intel.conf
@@ -92,10 +98,13 @@ Traffic flow: client → DNS → ingress VM's public IP → Traefik (Nomad job o
    cat /sys/module/kvm_intel/parameters/nested   # should print Y
    ```
    On AMD: same with `kvm_amd`.
-3. Configure two bridges on the host — a public `vmbr0` with your routable
-   IPs and a private `vmbr1` (e.g. `10.0.0.0/24` with the host as gateway
-   `10.0.0.1`). Masquerade egress from the private subnet on the host, e.g.
-   in `/etc/network/interfaces`:
+3. Configure the cluster bridge on the host. The PVE host needs one public
+   uplink (typically `vmbr0`, routable IPv4) and one internal bridge
+   (`vmbr1`, `10.0.0.0/24`) that the VMs attach to. The host acts as gateway
+   (`10.0.0.1`) and MASQUERADEs egress. The `iptables` DNAT rule below
+   forwards external HTTPS to the ingress VM — adjust the destination IP if
+   you change `SUBNET_CIDR`/`ip_offset`. Example `/etc/network/interfaces`
+   stanza:
    ```
    auto vmbr1
    iface vmbr1 inet static
@@ -103,15 +112,31 @@ Traffic flow: client → DNS → ingress VM's public IP → Traefik (Nomad job o
        bridge-ports none
        bridge-stp off
        bridge-fd 0
+       # Egress: masquerade anything leaving the cluster subnet out the public NIC
        post-up   iptables -t nat -A POSTROUTING -s '10.0.0.0/24' -o vmbr0 -j MASQUERADE
        post-down iptables -t nat -D POSTROUTING -s '10.0.0.0/24' -o vmbr0 -j MASQUERADE
+       # Ingress: forward 80/443 from the public uplink to the Traefik ingress VM (:8080)
+       post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 443 -j DNAT --to-destination 10.0.0.41:8080
+       post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 80  -j DNAT --to-destination 10.0.0.41:8080
+       post-up   iptables -A FORWARD -d 10.0.0.41/32 -p tcp -m multiport --dports 8080 -j ACCEPT
+       post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 443 -j DNAT --to-destination 10.0.0.41:8080
+       post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 80  -j DNAT --to-destination 10.0.0.41:8080
+       post-down iptables -D FORWARD -d 10.0.0.41/32 -p tcp -m multiport --dports 8080 -j ACCEPT
    ```
+   Also ensure IP forwarding is on: `sysctl -w net.ipv4.ip_forward=1` and
+   persist it in `/etc/sysctl.conf`.
 4. Upload the Ubuntu 24.04 Server ISO to the PVE ISO storage (e.g.
    `local:iso/ubuntu-24.04.1-live-server-amd64.iso`).
 5. Create an API token: **Datacenter → Permissions → API Tokens → Add**.
-   Give it enough privileges to create VMs, use storage, and attach ISOs
-   (e.g. `PVEVMAdmin` on `/` plus `Datastore.Allocate` on the storage pool).
-   Save the token ID (`user@realm!tokenname`) and secret.
+   Give it enough privileges to create VMs, use storage, attach ISOs, and
+   enumerate nodes:
+   - `PVEVMAdmin` on `/`
+   - `Datastore.Allocate` on the storage pool
+   - `Sys.Audit` on `/` (bpg/proxmox needs cluster/node discovery; this also
+     replaces PVE ≤ 8's `VM.Monitor`, which was removed in PVE 9)
+
+   Uncheck **Privilege Separation** on the token so it inherits the user's
+   roles. Save the token ID (`user@realm!tokenname`) and secret.
 
 ### 1.2 S3-compatible object storage
 
@@ -181,12 +206,18 @@ packer build \
   -var "template_storage=local-lvm" \
   -var "iso_file=local:iso/ubuntu-24.04.1-live-server-amd64.iso" \
   -var "packer_build_bridge=vmbr0" \
+  -var "vm_id=9000" \
   .
 ```
 
 Packer will create a new VM from the ISO, run Ubuntu autoinstall, install all
-tooling, shut down, and convert the VM to a template. The output template name
-is printed at the end — copy it into `BASE_TEMPLATE` in the env file.
+tooling, shut down, and convert the VM to a template. The template will be
+pinned to the VM ID you pass via `-var "vm_id=..."`.
+
+> **Pick the VM ID deliberately.** The bpg/proxmox Terraform provider clones
+> by numeric VM ID, not by name — you must put the **same integer** you pass
+> to Packer into `BASE_TEMPLATE_VM_ID` in your `.env`. Use any unused ID
+> (9000 is a common convention for templates).
 
 > If you use an API token instead of user/password, pass `-var "proxmox_username=<token-id>"` and `-var "proxmox_token=<token-secret>"`.
 
@@ -220,17 +251,12 @@ Rebuild this whenever the shared setup scripts under
    PVE_NODE=pve
    PVE_STORAGE_POOL=local-lvm
    BASE_TEMPLATE=<name-from-packer-output>
+   BASE_TEMPLATE_VM_ID=9000   # MUST match the `vm_id` you passed to `packer build`
 
    # Networking (pre-configured on the PVE host)
-   PUBLIC_BRIDGE=vmbr0
-   PRIVATE_BRIDGE=vmbr1
-   PRIVATE_SUBNET_CIDR=10.0.0.0/24
-   PRIVATE_GATEWAY_IP=10.0.0.1
-
-   # Ingress VM — the ONE public IP
-   INGRESS_PUBLIC_IP=<your-public-ipv4>
-   INGRESS_PUBLIC_GATEWAY=<gateway-on-vmbr0>
-   INGRESS_PUBLIC_CIDR_BIT=24
+   BRIDGE=vmbr1
+   SUBNET_CIDR=10.0.0.0/24
+   GATEWAY_IP=10.0.0.1
 
    # SSH (paste the full PEM content)
    SSH_PUBLIC_KEY="ssh-ed25519 AAAA... e2b-cluster"
@@ -315,19 +341,28 @@ Terraform must be able to SSH to each VM's private IP (Step 1.5 note).
 
 ## Step 7: Create the Wildcard DNS Record
 
-After `apply` finishes, Terraform prints:
+After `apply` finishes, Terraform prints the ingress VM's private IP:
 
 ```
-ingress_public_ip = "X.X.X.X"
+ingress_private_ip = "10.0.0.41"
 ```
 
-Go to your DNS provider and create a wildcard A record:
+That's the DNAT target on the PVE host (you wired this up in Step 1.1). The
+**public** address that DNS should point at is the PVE host's public IP —
+not the ingress VM's private one.
+
+Go to your DNS provider and create a wildcard A record pointing at the PVE
+host's public IPv4:
 
 ```
-*.<your-domain>    A    X.X.X.X    300
+*.<your-domain>    A    <pve-host-public-ip>    300
 ```
 
-Wait for propagation (`dig +short anything.<your-domain>` should return the IP).
+Verify DNS propagation and that the host is forwarding:
+```sh
+dig +short anything.<your-domain>         # should return the PVE host IP
+curl -vk https://<pve-host-public-ip>     # should hit Traefik on the ingress VM
+```
 
 ---
 
@@ -365,12 +400,32 @@ make seed-db
 
 ## Proxmox Architecture Details
 
+### Terraform provider
+
+The Proxmox provisioning uses the [`bpg/proxmox`](https://registry.terraform.io/providers/bpg/proxmox)
+provider (resource `proxmox_virtual_environment_vm`). The `provider "proxmox"`
+block constructs the bpg `api_token` string internally by combining
+`PROXMOX_API_TOKEN_ID` and `PROXMOX_API_TOKEN_SECRET` — you keep supplying
+both env vars as before. No SSH block is configured; bpg only requires SSH
+for file-upload / PVE-shell operations which this stack does not use.
+
 ### Networking
 
-- **Public bridge** (`vmbr0`): host-attached bridge with routable IPv4. Used
-  only by the ingress VM's first NIC.
-- **Private bridge** (`vmbr1`): `10.0.0.0/24`. All other VMs, plus the ingress
-  VM's second NIC. The PVE host does MASQUERADE for egress (Step 1.1).
+- **Cluster bridge** (`BRIDGE`, default `vmbr1`): the single bridge every VM
+  attaches to. Subnet, gateway, and DNS servers are controlled by
+  `SUBNET_CIDR` / `GATEWAY_IP` / `DNS_SERVERS` (defaults `10.0.0.0/24`,
+  `10.0.0.1`, `1.1.1.1`/`8.8.8.8`). The PVE host is the gateway and
+  MASQUERADEs egress — configured manually on the host (Step 1.1), not by
+  Terraform.
+- **Per-pool IP offsets**: each pool's module has an `ip_offset` variable
+  that picks the starting host bits inside `SUBNET_CIDR` — control servers
+  `.11+`, api `.21+`, clickhouse `.31+`, ingress `.41`, orchestrator
+  `.51+`, build `.101+`. Changing `SUBNET_CIDR` rescales all of them to
+  the new base.
+- **External ingress**: the PVE host DNATs 80/443 from its public interface
+  to the ingress VM (`.41:8080`). Wildcard DNS points at the PVE host's
+  public IP, not at any VM. TLS is terminated by Traefik inside the ingress
+  VM.
 - **Service Discovery**: Consul DNS (`.service.consul`) for all inter-service
   lookups. Cluster VMs point `/etc/systemd/resolved.conf.d/consul.conf` at
   Consul's local DNS listener on port 8600.
@@ -389,8 +444,7 @@ make seed-db
 Every pool exposes **count + per-VM CPU, RAM, and disk** as `.env` variables,
 all wired through the Makefile's `TF_VAR_*` plumbing. Defaults are small-host /
 dev sized — scale up for production. The ingress pool is always a single VM by
-design (dual-NIC, the only public IP), so it has no size variable — only
-sizing.
+design (reached via host DNAT), so it has no cluster-size variable.
 
 **Cluster size (VM count per pool)**
 
@@ -414,8 +468,8 @@ sizing.
 | clickhouse     | `CLICKHOUSE_CPU_CORES` (4)      | `CLICKHOUSE_MEMORY_MB` (8192)      | `CLICKHOUSE_DISK_SIZE_GB` (20)     | `CLICKHOUSE_DATA_VOLUME_SIZE_GB` (100) — second virtio disk mounted at `/clickhouse` |
 
 > `CPU_CORES` is the number of cores presented to the guest (single socket,
-> `cpu = "host"`). `MEMORY_MB` is the guest RAM in megabytes. `DISK_SIZE_GB`
-> is the root disk on `$PVE_STORAGE_POOL`.
+> `cpu { type = "host" }`). `MEMORY_MB` is the guest RAM in megabytes.
+> `DISK_SIZE_GB` is the root disk on `$PVE_STORAGE_POOL`.
 
 **Example production sizing** (`.env`):
 
@@ -442,13 +496,13 @@ All size changes propagate via `terraform plan` / `apply`:
 - **Root / data disk size**: grown in-place; Proxmox resizes the underlying volume. You may need to run `growpart` + `resize2fs` / `xfs_growfs` inside the guest to expand the filesystem.
 - **Cluster size (count)**: new VMs are provisioned and bootstrapped; removed VMs are destroyed.
 
-The VM `lifecycle` block ignores `network`, `ipconfig0`, `ciuser`, and `sshkeys`
-to avoid cloud-init drift — so the private IP, SSH key, and NIC model are
-effectively set-once at VM creation.
+The VM `lifecycle` block ignores the `initialization` and `network_device`
+blocks to avoid cloud-init drift — so the private IP, SSH key, DNS, and NIC
+model are effectively set-once at VM creation.
 
 > **Nested KVM requirement:** the Proxmox host must have nested virtualization
-> enabled (Step 1.1). The orchestrator and build pool VMs use `cpu = "host"`
-> so their Firecracker microVMs can see `/dev/kvm`.
+> enabled (Step 1.1). The orchestrator and build pool VMs set
+> `cpu { type = "host" }` so their Firecracker microVMs can see `/dev/kvm`.
 
 ### Secrets
 
@@ -528,16 +582,25 @@ report "KVM acceleration can be used". If not:
 3. Power-cycle the VM after enabling nested on the host (a reboot of the
    guest is not enough if the feature was only just toggled).
 
-### Ingress VM can't reach private services
+### External traffic doesn't reach the ingress VM
 
-The ingress VM has two NICs — verify that the private NIC came up with the
-expected IP:
+The ingress VM has no public IP — it's reached via a DNAT rule on the PVE
+host (Step 1.1). Verify:
+
 ```sh
-ssh root@<INGRESS_PUBLIC_IP> ip -4 addr show
+# On the PVE host — the DNAT and FORWARD rules must be present
+iptables -t nat -L PREROUTING -n -v | grep 8080
+iptables -L FORWARD -n -v      | grep 10.0.0.41
+
+# IP forwarding must be enabled
+sysctl net.ipv4.ip_forward
+
+# From the PVE host — Traefik must answer on the ingress VM's private IP
+curl -vk http://10.0.0.41:8080/ping
 ```
-Both NICs should have addresses (`ens18` public, `ens19` private). If not,
-check the Proxmox cloud-init status in the PVE UI (VM → Cloud-Init) and
-re-run the init: `qm set <vmid> --citype nocloud` then regenerate.
+
+If the last `curl` fails, SSH to the ingress VM (`ssh root@10.0.0.41`) and
+check that Traefik is running as a Nomad job (`nomad job status ingress`).
 
 ### Packer build hangs at "waiting for ssh"
 

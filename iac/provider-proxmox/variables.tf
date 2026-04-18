@@ -1,6 +1,6 @@
 variable "domain_name" {
   type        = string
-  description = "Domain name used for Traefik Host routing and service URLs. DNS records are created manually (not by Terraform). Point *.<domain_name> at the value of output ingress_public_ip."
+  description = "Domain name used for Traefik Host routing and service URLs. DNS records are created manually (not by Terraform). Point *.<domain_name> at the PVE host's public IP (the host DNATs 80/443 to the ingress VM)."
 }
 
 variable "prefix" {
@@ -60,54 +60,40 @@ variable "base_template" {
   default     = "e2b-nomad-cluster"
 }
 
+variable "base_template_vm_id" {
+  type        = number
+  description = "Numeric PVE VM ID of the Packer-built base template. Must match the `vm_id` passed to `packer build`. The bpg/proxmox provider clones by VM ID, not name."
+}
+
 // ---
 // Networking
 // ---
+// Single private bridge. All VMs (including the ingress VM) live on this
+// bridge with private IPs. External traffic reaches the ingress VM via a
+// DNAT rule on the PVE host (see self-host-proxmox.md step 7).
 
-variable "public_bridge" {
+variable "bridge" {
   type        = string
-  description = "Proxmox bridge attached to the public network (used only by the ingress VM). Pre-configured on the PVE host."
-  default     = "vmbr0"
-}
-
-variable "private_bridge" {
-  type        = string
-  description = "Proxmox bridge for the private cluster network. Pre-configured on the PVE host; host handles egress (e.g. Hetzner vSwitch + masquerade)."
+  description = "Proxmox bridge for cluster VMs. Pre-configured on the PVE host; host handles egress (e.g. masquerade)."
   default     = "vmbr1"
 }
 
-variable "private_subnet_cidr" {
+variable "subnet_cidr" {
   type        = string
-  description = "Private subnet CIDR for all non-ingress cluster VMs, e.g. 10.0.0.0/24"
+  description = "Subnet CIDR for all cluster VMs, e.g. 10.0.0.0/24"
   default     = "10.0.0.0/24"
 }
 
-variable "private_gateway_ip" {
+variable "gateway_ip" {
   type        = string
-  description = "Private subnet gateway IP (usually the Proxmox host on the private bridge), e.g. 10.0.0.1"
+  description = "Subnet gateway IP (usually the Proxmox host on the cluster bridge), e.g. 10.0.0.1"
   default     = "10.0.0.1"
 }
 
-variable "private_dns_servers" {
+variable "dns_servers" {
   type        = list(string)
   description = "DNS servers used by cluster VMs (before Consul DNS takes over)"
   default     = ["1.1.1.1", "8.8.8.8"]
-}
-
-variable "ingress_public_ip" {
-  type        = string
-  description = "Public IPv4 assigned to the ingress VM's public NIC. Point your wildcard DNS A record here."
-}
-
-variable "ingress_public_gateway" {
-  type        = string
-  description = "Default gateway on the public bridge (next-hop for the ingress VM)"
-}
-
-variable "ingress_public_cidr_bit" {
-  type        = number
-  description = "CIDR mask length for the ingress public IP (e.g. 24, 26)"
-  default     = 24
 }
 
 // ---
