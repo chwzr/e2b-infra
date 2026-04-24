@@ -59,7 +59,13 @@ ACTION=="add|change", KERNEL=="nbd*", OPTIONS:="nowatch"
 EOH
 udevadm control --reload-rules
 udevadm trigger
-modprobe nbd nbds_max=4096
+# Persist module load across reboots (Proxmox reboots the VM on any hardware
+# config change) and pin nbds_max so the orchestrator's device pool sizing is
+# stable.
+echo 'nbd' > /etc/modules-load.d/nbd.conf
+echo 'options nbd nbds_max=4096' > /etc/modprobe.d/nbd.conf
+modprobe -r nbd 2>/dev/null || true
+modprobe nbd
 
 mkdir -p /fc-vm
 

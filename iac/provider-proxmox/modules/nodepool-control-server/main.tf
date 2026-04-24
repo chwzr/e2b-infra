@@ -98,6 +98,10 @@ resource "null_resource" "bootstrap" {
     user        = "root"
     private_key = var.ssh_private_key
     timeout     = "5m"
+
+    bastion_host        = var.ssh_bastion_host != "" ? var.ssh_bastion_host : null
+    bastion_user        = var.ssh_bastion_host != "" ? var.ssh_bastion_user : null
+    bastion_private_key = var.ssh_bastion_host != "" ? var.ssh_private_key : null
   }
 
   provisioner "file" {
@@ -107,6 +111,7 @@ resource "null_resource" "bootstrap" {
       CONSUL_RETRY_JOIN            = jsonencode(local.private_ips)
       NOMAD_TOKEN                  = var.nomad_acl_token
       CONSUL_TOKEN                 = var.consul_acl_token
+      CONSUL_DNS_REQUEST_TOKEN     = var.consul_dns_request_token
       CONSUL_GOSSIP_ENCRYPTION_KEY = var.consul_gossip_encryption_key
       DATACENTER                   = var.datacenter
     })

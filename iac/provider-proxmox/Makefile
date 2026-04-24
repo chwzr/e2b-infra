@@ -37,6 +37,9 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, GATEWAY_IP) \
 	$(call tfvar, SSH_PUBLIC_KEY) \
 	$(call tfvar, SSH_PRIVATE_KEY) \
+	$(call tfvar, SSH_BASTION_HOST) \
+	$(call tfvar, SSH_BASTION_USER) \
+	$(call tfvar, NOMAD_ADDRESS) \
 	$(call tfvar, CONTROL_SERVER_CLUSTER_SIZE) \
 	$(call tfvar, CONTROL_SERVER_CPU_CORES) \
 	$(call tfvar, CONTROL_SERVER_MEMORY_MB) \
@@ -61,11 +64,30 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, CLICKHOUSE_MEMORY_MB) \
 	$(call tfvar, CLICKHOUSE_DISK_SIZE_GB) \
 	$(call tfvar, CLICKHOUSE_DATA_VOLUME_SIZE_GB) \
-	$(call tfvar, REDIS_MANAGED)
+	$(call tfvar, REDIS_MANAGED) \
+	$(call tfvar, POSTGRES_CONNECTION_STRING) \
+	$(call tfvar, SUPABASE_JWT_SECRETS) \
+	$(call tfvar, LAUNCH_DARKLY_API_KEY) \
+	$(call tfvar, GRAFANA_OTLP_URL) \
+	$(call tfvar, GRAFANA_OTEL_COLLECTOR_TOKEN) \
+	$(call tfvar, GRAFANA_USERNAME) \
+	$(call tfvar, GRAFANA_LOGS_USER) \
+	$(call tfvar, GRAFANA_LOGS_URL) \
+	$(call tfvar, GRAFANA_LOGS_COLLECTOR_API_TOKEN)
 
 .PHONY: provider-login
 provider-login:
 	@echo "No provider login required for Proxmox (API token auth via PROXMOX_API_TOKEN_* env vars)"
+
+.PHONY: setup-pve-host
+setup-pve-host:
+	@test -n "$(PROXMOX_API_URL)" || { echo "PROXMOX_API_URL not set (check your .env)"; exit 1; }
+	@ host=$$(echo "$(PROXMOX_API_URL)" | sed -E 's|^https?://([^:/]+).*|\1|'); \
+	  ssh_target="$${PVE_SSH_USER:-root}@$${PVE_SSH_HOST:-$$host}"; \
+	  echo "==> Copying setup-pve-host.sh to $$ssh_target"; \
+	  scp scripts/setup-pve-host.sh "$$ssh_target:/tmp/setup-pve-host.sh"; \
+	  echo "==> Running setup-pve-host.sh on $$ssh_target"; \
+	  ssh "$$ssh_target" "BRIDGE='$(BRIDGE)' SUBNET_CIDR='$(SUBNET_CIDR)' GATEWAY_IP='$(GATEWAY_IP)' bash /tmp/setup-pve-host.sh"
 
 .PHONY: switch
 switch:
@@ -74,7 +96,7 @@ switch:
 		-backend-config="region=$(S3_REGION)" \
 		-backend-config="access_key=$(S3_ACCESS_KEY)" \
 		-backend-config="secret_key=$(S3_SECRET_KEY)" \
-		-backend-config="endpoints={s3=\"$(S3_ENDPOINT)\"}"
+		-backend-config="endpoints={s3=\"https://$(S3_ENDPOINT)\"}"
 
 .PHONY: init
 init:
@@ -83,7 +105,7 @@ init:
 		-backend-config="region=$(S3_REGION)" \
 		-backend-config="access_key=$(S3_ACCESS_KEY)" \
 		-backend-config="secret_key=$(S3_SECRET_KEY)" \
-		-backend-config="endpoints={s3=\"$(S3_ENDPOINT)\"}"
+		-backend-config="endpoints={s3=\"https://$(S3_ENDPOINT)\"}"
 	$(tf_vars) $(TF) apply -target=module.init -input=false -compact-warnings
 
 .PHONY: plan

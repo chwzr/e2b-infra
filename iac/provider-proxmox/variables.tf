@@ -111,6 +111,24 @@ variable "ssh_private_key" {
   description = "SSH private key Terraform uses to bootstrap VMs via remote-exec"
 }
 
+variable "ssh_bastion_host" {
+  type        = string
+  default     = ""
+  description = "Optional SSH bastion/jump host for Terraform remote-exec. Leave empty to connect directly (e.g. when terraform runs on the PVE host or a workstation with VPN into the cluster subnet)."
+}
+
+variable "ssh_bastion_user" {
+  type        = string
+  default     = "root"
+  description = "SSH user for the bastion host (only used when ssh_bastion_host is set)."
+}
+
+variable "nomad_address" {
+  type        = string
+  default     = ""
+  description = "Override for the Nomad Terraform provider address. Leave empty to use the Traefik-routed domain URL. On first bootstrap, set to a direct Nomad listener (e.g. http://localhost:4646 through an SSH tunnel) because Traefik is itself a Nomad job and not yet running."
+}
+
 // ---
 // Control Server
 // ---

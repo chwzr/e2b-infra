@@ -98,6 +98,10 @@ resource "null_resource" "bootstrap" {
     user        = "root"
     private_key = var.ssh_private_key
     timeout     = "5m"
+
+    bastion_host        = var.ssh_bastion_host != "" ? var.ssh_bastion_host : null
+    bastion_user        = var.ssh_bastion_host != "" ? var.ssh_bastion_user : null
+    bastion_private_key = var.ssh_bastion_host != "" ? var.ssh_private_key : null
   }
 
   provisioner "file" {

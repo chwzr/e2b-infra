@@ -32,9 +32,13 @@ module "control_server" {
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
 
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
+
   nomad_acl_token              = var.nomad_acl_token
   consul_acl_token             = var.consul_acl_token
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
+  consul_dns_request_token     = var.consul_dns_request_token
 }
 
 module "api" {
@@ -61,6 +65,9 @@ module "api" {
 
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
+
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
 
   consul_retry_join_ips        = module.control_server.private_ips
   consul_acl_token             = var.consul_acl_token
@@ -94,6 +101,9 @@ module "ingress" {
 
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
+
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
 
   consul_retry_join_ips        = module.control_server.private_ips
   consul_acl_token             = var.consul_acl_token
@@ -129,6 +139,9 @@ module "orchestrator" {
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
 
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
+
   consul_retry_join_ips        = module.control_server.private_ips
   consul_acl_token             = var.consul_acl_token
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
@@ -162,6 +175,9 @@ module "build" {
 
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
+
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
 
   consul_retry_join_ips        = module.control_server.private_ips
   consul_acl_token             = var.consul_acl_token
@@ -198,6 +214,9 @@ module "clickhouse" {
 
   ssh_public_key  = var.ssh_public_key
   ssh_private_key = var.ssh_private_key
+
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
 
   consul_retry_join_ips        = module.control_server.private_ips
   consul_acl_token             = var.consul_acl_token

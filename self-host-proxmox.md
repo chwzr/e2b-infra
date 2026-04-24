@@ -37,8 +37,8 @@ DNAT rule on the PVE host (the host is the only thing with a public IP).
 - A Proxmox VE host (7.x, 8.x, or 9.x) with:
   - Nested virtualization enabled on the host CPU (`/sys/module/kvm_intel/parameters/nested = Y`, or `kvm_amd` on AMD)
   - One pre-configured Linux bridge (e.g. `vmbr1`) for the cluster subnet, with the PVE host acting as gateway and performing MASQUERADE for egress. A public uplink on the host (typically `vmbr0`) is used only by the PVE host itself, which DNATs 80/443 to the ingress VM.
-  - An Ubuntu 24.04 Server ISO uploaded to the PVE ISO storage
-  - An API token with VM + storage + ISO privileges
+  - Outbound internet from the cluster bridge (the Packer build + the e2b VMs need it for `apt` / Docker / GitHub). The MASQUERADE rule in Step 1.1 provides this.
+  - An API token with VM + storage privileges
 - An S3-compatible object storage (Hetzner Object Storage or self-hosted MinIO) with an **already-provisioned** bucket for Terraform state
 - A domain whose DNS you control — any provider, Terraform does not manage DNS
 - A PostgreSQL database (Supabase's Postgres only supported for now)
@@ -91,52 +91,80 @@ cluster bridge.
 ### 1.1 Proxmox host
 
 1. Install Proxmox VE 7.x, 8.x, or 9.x on your hardware.
-2. **Enable nested virtualization** on the host. On Intel:
-   ```sh
-   echo "options kvm-intel nested=Y" > /etc/modprobe.d/kvm-intel.conf
-   modprobe -r kvm_intel && modprobe kvm_intel
-   cat /sys/module/kvm_intel/parameters/nested   # should print Y
-   ```
-   On AMD: same with `kvm_amd`.
-3. Configure the cluster bridge on the host. The PVE host needs one public
-   uplink (typically `vmbr0`, routable IPv4) and one internal bridge
-   (`vmbr1`, `10.0.0.0/24`) that the VMs attach to. The host acts as gateway
-   (`10.0.0.1`) and MASQUERADEs egress. The `iptables` DNAT rule below
-   forwards external HTTPS to the ingress VM — adjust the destination IP if
-   you change `SUBNET_CIDR`/`ip_offset`. Example `/etc/network/interfaces`
-   stanza:
-   ```
-   auto vmbr1
-   iface vmbr1 inet static
-       address 10.0.0.1/24
-       bridge-ports none
-       bridge-stp off
-       bridge-fd 0
-       # Egress: masquerade anything leaving the cluster subnet out the public NIC
-       post-up   iptables -t nat -A POSTROUTING -s '10.0.0.0/24' -o vmbr0 -j MASQUERADE
-       post-down iptables -t nat -D POSTROUTING -s '10.0.0.0/24' -o vmbr0 -j MASQUERADE
-       # Ingress: forward 80/443 from the public uplink to the Traefik ingress VM (:8080)
-       post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 443 -j DNAT --to-destination 10.0.0.41:8080
-       post-up   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 80  -j DNAT --to-destination 10.0.0.41:8080
-       post-up   iptables -A FORWARD -d 10.0.0.41/32 -p tcp -m multiport --dports 8080 -j ACCEPT
-       post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 443 -j DNAT --to-destination 10.0.0.41:8080
-       post-down iptables -t nat -D PREROUTING -i vmbr0 -p tcp --dport 80  -j DNAT --to-destination 10.0.0.41:8080
-       post-down iptables -D FORWARD -d 10.0.0.41/32 -p tcp -m multiport --dports 8080 -j ACCEPT
-   ```
-   Also ensure IP forwarding is on: `sysctl -w net.ipv4.ip_forward=1` and
-   persist it in `/etc/sysctl.conf`.
-4. Upload the Ubuntu 24.04 Server ISO to the PVE ISO storage (e.g.
-   `local:iso/ubuntu-24.04.1-live-server-amd64.iso`).
-5. Create an API token: **Datacenter → Permissions → API Tokens → Add**.
-   Give it enough privileges to create VMs, use storage, attach ISOs, and
-   enumerate nodes:
-   - `PVEVMAdmin` on `/`
-   - `Datastore.Allocate` on the storage pool
-   - `Sys.Audit` on `/` (bpg/proxmox needs cluster/node discovery; this also
-     replaces PVE ≤ 8's `VM.Monitor`, which was removed in PVE 9)
 
-   Uncheck **Privilege Separation** on the token so it inherits the user's
-   roles. Save the token ID (`user@realm!tokenname`) and secret.
+2. Run the host setup script from your workstation (after you've filled in
+   `PROXMOX_API_URL`, `BRIDGE`, `SUBNET_CIDR`, `GATEWAY_IP` in `.env` — see
+   Step 3):
+
+   ```sh
+   PROVIDER=proxmox make setup-pve-host
+   ```
+
+   This SSHes to the PVE host (hostname is parsed from `PROXMOX_API_URL`;
+   override with `PVE_SSH_HOST` and/or `PVE_SSH_USER`) and configures, idempotently:
+
+   - **Nested virtualization** — auto-detects Intel/AMD, writes
+     `/etc/modprobe.d/kvm-nested.conf`, reloads the module.
+   - **IP forwarding** — persists `net.ipv4.ip_forward=1` in
+     `/etc/sysctl.d/99-e2b.conf`.
+   - **Cluster bridge + SNAT** — creates a Proxmox SDN "simple" zone
+     (`e2bzone`) with a VNet named `$BRIDGE`, a subnet covering
+     `$SUBNET_CIDR` with `$GATEWAY_IP`, and `--snat 1` (the SDN plugin emits
+     the MASQUERADE rule for you). Commits with `pvesh set /cluster/sdn`.
+   - **DNAT 80/443 → ingress VM** — installs `/etc/systemd/system/e2b-nat.service`
+     plus `/usr/local/sbin/e2b-nat-{up,down}` helpers. The unit re-applies
+     the DNAT + FORWARD rules on every boot and tears them down on stop.
+
+   > **If `$BRIDGE` already has a manual stanza in `/etc/network/interfaces`**,
+   > the script skips the SDN block and warns loudly. Either remove the
+   > manual stanza and re-run (to let SDN own it), or keep your stanza and
+   > ensure it provides `GATEWAY_IP` on `SUBNET_CIDR` and MASQUERADEs egress
+   > out `$PUBLIC_IFACE` yourself.
+
+   > **Override defaults** if needed: the script reads `PUBLIC_IFACE` (default
+   > `vmbr0`), `INGRESS_IP` (default `10.0.0.41`, matches the ingress pool's
+   > `ip_offset`), `INGRESS_PORT` (default `8080`). Export them before
+   > `make setup-pve-host` if your setup diverges.
+
+   <details>
+   <summary>What the script does under the hood — equivalent manual commands</summary>
+
+   ```sh
+   # 1. Nested virt (Intel shown; use kvm-amd on AMD)
+   echo "options kvm-intel nested=Y" > /etc/modprobe.d/kvm-nested.conf
+   modprobe -r kvm_intel && modprobe kvm_intel
+
+   # 2. IP forwarding
+   echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-e2b.conf
+   sysctl -p /etc/sysctl.d/99-e2b.conf
+
+   # 3. Cluster bridge + SNAT via SDN
+   pvesh create /cluster/sdn/zones  --type simple --zone e2bzone --ipam pve
+   pvesh create /cluster/sdn/vnets  --vnet vmbr1 --zone e2bzone
+   pvesh create /cluster/sdn/vnets/vmbr1/subnets \
+     --subnet 10.0.0.0/24 --type subnet --gateway 10.0.0.1 --snat 1
+   pvesh set    /cluster/sdn
+
+   # 4. DNAT 80/443 → 10.0.0.41:8080 (persist via the systemd unit)
+   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 443 \
+     -j DNAT --to-destination 10.0.0.41:8080
+   iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 80  \
+     -j DNAT --to-destination 10.0.0.41:8080
+   iptables -A FORWARD -d 10.0.0.41/32 -p tcp --dport 8080 -j ACCEPT
+   ```
+
+   </details>
+
+3. **Create an API token** (manual — the script doesn't do this so the secret
+   never leaves the PVE UI): **Datacenter → Permissions → API Tokens → Add**.
+   - Uncheck **Privilege Separation** so the token inherits the user's roles.
+   - If you use a non-root user, grant:
+     - `PVEVMAdmin` on `/`
+     - `Datastore.Allocate` on the storage pool
+     - `Sys.Audit` on `/` (bpg/proxmox needs cluster/node discovery; also
+       replaces PVE ≤ 8's `VM.Monitor`, removed in PVE 9)
+   - Save the token ID (`user@realm!tokenname`) and secret — they go into
+     `PROXMOX_API_TOKEN_ID` / `PROXMOX_API_TOKEN_SECRET` in `.env`.
 
 ### 1.2 S3-compatible object storage
 
@@ -191,9 +219,45 @@ You'll need:
 
 ## Step 2: Build the Base VM Template
 
-All node pool VMs clone from one Packer-built Ubuntu 24.04 template that has
-Docker, Consul, Nomad, Vault, qemu-guest-agent, and the shared setup scripts
-pre-installed.
+Two-step flow (same shape as AWS and GCP: start from an official cloud image,
+run Packer provisioners, snapshot as a template):
+
+1. **One-time:** import the Ubuntu 24.04 cloud image into PVE and turn it
+   into a "base" template.
+2. **Per rebuild:** Packer clones that base, installs Docker / Consul /
+   Nomad / Vault / qemu-guest-agent, and saves the final `e2b-nomad-cluster`
+   template that Terraform clones for every node-pool VM.
+
+### 2.1 Prepare the cloud-image base template (once)
+
+A helper script does the `qm` incantations — run it **on the Proxmox host**:
+
+```sh
+# Copy your SSH key + helper script to the PVE host
+scp ~/.ssh/e2b-proxmox.pub root@pve:/root/.ssh/e2b-proxmox.pub
+scp iac/provider-proxmox/nomad-cluster-disk-image/prepare-base-template.sh \
+    root@pve:/tmp/prepare-base-template.sh
+
+ssh root@pve
+BASE_VM_ID=9001 \
+STORAGE=local-zfs \
+BRIDGE=vmbr1 \
+SSH_PUBKEY=/root/.ssh/e2b-proxmox.pub \
+  bash /tmp/prepare-base-template.sh
+```
+
+What the script does:
+- downloads `noble-server-cloudimg-amd64.img`
+- creates VM `$BASE_VM_ID`, imports the image as its disk, adds a cloud-init
+  drive, resizes to 20 GB
+- bakes in your SSH public key via `qm set --ciuser ubuntu --sshkeys ...`
+  so Packer can SSH into every clone of it
+- converts VM to a template
+
+You only do this once per Ubuntu release. Pick any unused VM ID; `9001` is
+convention.
+
+### 2.2 Run Packer to produce the e2b template
 
 ```sh
 cd iac/provider-proxmox/nomad-cluster-disk-image
@@ -203,26 +267,41 @@ packer build \
   -var "proxmox_username=root@pam" \
   -var "proxmox_password=..." \
   -var "proxmox_node=pve" \
-  -var "template_storage=local-lvm" \
-  -var "iso_file=local:iso/ubuntu-24.04.1-live-server-amd64.iso" \
-  -var "packer_build_bridge=vmbr0" \
+  -var "template_storage=local-zfs" \
+  -var "packer_build_bridge=vmbr1" \
+  -var "cloudimg_base_vm_id=9001" \
   -var "vm_id=9000" \
+  -var "ssh_private_key_file=$HOME/.ssh/e2b-proxmox" \
+  -var "build_ip=10.0.0.99/24" \
+  -var "build_gateway=10.0.0.1" \
   .
 ```
 
-Packer will create a new VM from the ISO, run Ubuntu autoinstall, install all
-tooling, shut down, and convert the VM to a template. The template will be
-pinned to the VM ID you pass via `-var "vm_id=..."`.
+Packer clones VM `9001`, gives the clone a static IP on the cluster bridge
+(the bridge has no DHCP — every VM in this architecture gets a static IP via
+cloud-init), SSHes in as `ubuntu` with the private key matching the public
+key you baked into the base template, runs provisioners, and saves the
+result as template VM `9000`.
+
+> **Pick `build_ip` outside the node-pool ranges.** Defaults occupied by
+> Terraform: control `.11–.13`, api `.21+`, clickhouse `.31+`, ingress `.41`,
+> orchestrator `.51+`, build `.101+`. `10.0.0.99/24` is a safe default.
 
 > **Pick the VM ID deliberately.** The bpg/proxmox Terraform provider clones
 > by numeric VM ID, not by name — you must put the **same integer** you pass
-> to Packer into `BASE_TEMPLATE_VM_ID` in your `.env`. Use any unused ID
-> (9000 is a common convention for templates).
+> as `-var "vm_id=..."` into `BASE_TEMPLATE_VM_ID` in your `.env`. `9000` is
+> convention for the e2b template; `9001` is convention for the cloud-image
+> base.
+
+> **`packer_build_bridge`** must reach the internet so Packer can `apt install`,
+> `docker pull`, etc. On a single-host setup, the cluster bridge (`vmbr1`) works
+> because the PVE host MASQUERADEs egress. Use `vmbr0` only if you put the
+> builder directly on a public bridge.
 
 > If you use an API token instead of user/password, pass `-var "proxmox_username=<token-id>"` and `-var "proxmox_token=<token-secret>"`.
 
-Rebuild this whenever the shared setup scripts under
-`iac/nomad-cluster-disk-image/setup/` change.
+Rebuild this (Step 2.2 only; 2.1 is one-time) whenever the shared setup
+scripts under `iac/nomad-cluster-disk-image/setup/` change.
 
 ---
 
@@ -604,13 +683,21 @@ check that Traefik is running as a Nomad job (`nomad job status ingress`).
 
 ### Packer build hangs at "waiting for ssh"
 
-- Check the PVE VM console during autoinstall — subiquity output will show
-  why installation is stuck.
-- Verify the HTTP user-data file is reachable from the new VM (Packer binds
-  `http_directory` on the machine running Packer — it has to be reachable
-  from the PVE bridge used during build).
-- `ssh_password` must match the password hashed in `http/user-data` (default
-  is `packer`).
+- **No IP on the build VM.** The cluster bridge has no DHCP, so Packer must
+  pass a static IP via `-var "build_ip=..."` and `-var "build_gateway=..."`.
+  Verify by opening the VM's console in the PVE UI — if `ip -4 addr show`
+  reports no address on `ens18`, the `ipconfig` args weren't set.
+- **SSH key mismatch.** `ssh_private_key_file` must be the private key
+  whose public half you baked into the base template via
+  `qm set --sshkeys`. Boot the base template manually and try SSHing in
+  as `ubuntu` — if that fails, the key pair is wrong.
+- **No outbound internet from the build VM.** It needs to `apt install` /
+  `docker pull`. Confirm `packer_build_bridge` is the cluster bridge
+  (e.g. `vmbr1`) and that the PVE host's MASQUERADE rule from Step 1.1
+  is in place.
+- **Source isn't actually a template.** Cloning from a plain VM (not a
+  template) fails with "clone feature is not supported". Run
+  `qm template <cloudimg_base_vm_id>` on the PVE host.
 
 ### S3 / Object Storage errors
 

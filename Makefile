@@ -13,6 +13,12 @@ S3_BUCKET_PREFIX ?= $(PREFIX)$(S3_REGION)-
 provider-login:
 	$(MAKE) -C iac/provider-$(PROVIDER) provider-login
 
+# Provider-specific one-time host bootstrap (currently Proxmox only:
+# nested virt, IP forwarding, SDN bridge + SNAT, ingress DNAT).
+.PHONY: setup-pve-host
+setup-pve-host:
+	$(MAKE) -C iac/provider-$(PROVIDER) setup-pve-host
+
 .PHONY: init
 init:
 	./scripts/confirm.sh $(TERRAFORM_ENVIRONMENT)

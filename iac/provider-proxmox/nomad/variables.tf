@@ -1,4 +1,9 @@
 # Core
+variable "prefix" {
+  type        = string
+  description = "Resource name prefix (matches PREFIX in .env). Used to construct docker image paths that match the Makefile's REGISTRY_PREFIX."
+}
+
 variable "domain_name" {
   type = string
 }
@@ -9,6 +14,18 @@ variable "environment" {
 
 variable "container_registry_url" {
   type = string
+}
+
+variable "s3_access_key" {
+  type        = string
+  sensitive   = true
+  description = "S3 access key passed to Nomad artifact sources (go-getter query params)."
+}
+
+variable "s3_secret_key" {
+  type        = string
+  sensitive   = true
+  description = "S3 secret key passed to Nomad artifact sources (go-getter query params)."
 }
 
 variable "s3_endpoint" {
@@ -24,6 +41,12 @@ variable "s3_region" {
 variable "nomad_acl_token" {
   type      = string
   sensitive = true
+}
+
+variable "nomad_address" {
+  type        = string
+  default     = ""
+  description = "Override for the Nomad API address used by data.external. Leave empty to use https://nomad.$DOMAIN (Traefik-routed). Set to a direct URL (e.g. http://localhost:4646) for bootstrap when Traefik is not yet running."
 }
 
 variable "consul_acl_token" {

@@ -94,7 +94,7 @@ module "client_proxy" {
   redis_url           = var.redis_url
   redis_cluster_url   = var.redis_cluster_url
   redis_tls_ca_base64 = var.redis_tls_ca_base64
-  image               = "${var.container_registry_url}/core/client-proxy:latest"
+  image               = "${var.container_registry_url}/${var.prefix}core/client-proxy:latest"
 
   otel_collector_grpc_endpoint = "localhost:${var.otel_collector_grpc_port}"
   logs_collector_address       = "http://localhost:${var.logs_proxy_port}"
@@ -122,7 +122,7 @@ module "api" {
   port_name                      = "api"
   port_number                    = var.api_port
   environment                    = var.environment
-  api_docker_image               = "${var.container_registry_url}/core/api:latest"
+  api_docker_image               = "${var.container_registry_url}/${var.prefix}core/api:latest"
   postgres_connection_string     = var.postgres_connection_string
   supabase_jwt_secrets           = var.supabase_jwt_secrets
   nomad_acl_token                = var.nomad_acl_token
@@ -132,7 +132,7 @@ module "api" {
   redis_tls_ca_base64            = var.redis_tls_ca_base64
   clickhouse_connection_string   = local.clickhouse_connection_string
   sandbox_access_token_hash_seed = var.sandbox_access_token_hash_seed
-  db_migrator_docker_image       = "${var.container_registry_url}/core/db-migrator:latest"
+  db_migrator_docker_image       = "${var.container_registry_url}/${var.prefix}core/db-migrator:latest"
   loki_url                       = "http://loki.service.consul:${var.loki_port}"
   launch_darkly_api_key          = var.launch_darkly_api_key
   db_max_open_connections        = var.db_max_open_connections
@@ -204,7 +204,7 @@ module "template_manager" {
   domain_name      = var.domain_name
 
   api_secret                   = var.api_secret
-  artifact_source              = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/template-manager"
+  artifact_source              = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/template-manager?aws_access_key_id=${var.s3_access_key}&aws_access_key_secret=${var.s3_secret_key}&region=${var.s3_region}"
   template_bucket_name         = var.template_bucket_name
   build_cache_bucket_name      = var.build_cache_bucket_name
   otel_collector_grpc_endpoint = "localhost:${var.otel_collector_grpc_port}"
@@ -212,7 +212,7 @@ module "template_manager" {
   clickhouse_connection_string = local.clickhouse_connection_string
   launch_darkly_api_key        = var.launch_darkly_api_key
 
-  nomad_addr  = "https://nomad.${var.domain_name}"
+  nomad_addr  = var.nomad_address != "" ? var.nomad_address : "https://nomad.${var.domain_name}"
   nomad_token = var.nomad_acl_token
 }
 
@@ -225,7 +225,7 @@ module "template_manager_autoscaler" {
 
   node_pool                  = var.api_node_pool
   nomad_token                = var.nomad_acl_token
-  apm_plugin_artifact_source = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/nomad-nodepool-apm"
+  apm_plugin_artifact_source = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/nomad-nodepool-apm?aws_access_key_id=${var.s3_access_key}&aws_access_key_secret=${var.s3_secret_key}&region=${var.s3_region}"
 }
 
 # ---
@@ -257,7 +257,7 @@ module "clickhouse" {
   s3_endpoint   = "https://${var.s3_endpoint}"
   backup_bucket = var.clickhouse_backups_bucket_name
 
-  clickhouse_migrator_image = "${var.container_registry_url}/core/clickhouse-migrator:latest"
+  clickhouse_migrator_image = "${var.container_registry_url}/${var.prefix}core/clickhouse-migrator:latest"
 }
 
 # ---
@@ -279,7 +279,7 @@ module "orchestrator" {
   proxy_port = var.orchestrator_proxy_port
 
   environment           = var.environment
-  artifact_source       = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/orchestrator"
+  artifact_source       = "s3::https://${var.s3_endpoint}/${var.fc_env_pipeline_bucket_name}/orchestrator?aws_access_key_id=${var.s3_access_key}&aws_access_key_secret=${var.s3_secret_key}&region=${var.s3_region}"
   orchestrator_checksum = "hetzner-s3"
 
   logs_collector_address       = "http://localhost:${var.logs_proxy_port}"

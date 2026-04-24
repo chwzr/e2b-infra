@@ -82,6 +82,29 @@ for i in $(seq 1 60); do
     echo "${CONSUL_TOKEN}" > /tmp/consul.token
     consul acl bootstrap /tmp/consul.token 2>/dev/null || echo "ACL already bootstrapped"
     rm -f /tmp/consul.token
+
+    # Create DNS + service-register policies and bind them to the well-known
+    # CONSUL_DNS_REQUEST_TOKEN that every client uses as `tokens.default`.
+    # Without this the clients' ACL queries return empty DNS results and no
+    # service registrations.
+    if ! consul acl policy read -name dns-request-policy -token "${CONSUL_TOKEN}" >/dev/null 2>&1; then
+      consul acl policy create -name dns-request-policy -token "${CONSUL_TOKEN}" \
+        -rules 'node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }' \
+        || echo "failed to create dns-request-policy (may already exist)"
+    fi
+    if ! consul acl policy read -name register-service-policy -token "${CONSUL_TOKEN}" >/dev/null 2>&1; then
+      consul acl policy create -name register-service-policy -token "${CONSUL_TOKEN}" \
+        -rules 'service_prefix "" { policy = "write" }' \
+        || echo "failed to create register-service-policy (may already exist)"
+    fi
+    # consul acl token create fails with 'Secret ID is not unique' when the
+    # token already exists — treat that as success.
+    consul acl token create -token "${CONSUL_TOKEN}" \
+      -secret "${CONSUL_DNS_REQUEST_TOKEN}" \
+      -description "DNS + service-register token (used as tokens.default on all clients)" \
+      -policy-name dns-request-policy \
+      -policy-name register-service-policy \
+      2>&1 | grep -vE 'Secret ID is not unique|already exists' || true
     break
   fi
   if [[ -n "$consul_leader_addr" && "$consul_leader_addr" != "\"\"" ]]; then

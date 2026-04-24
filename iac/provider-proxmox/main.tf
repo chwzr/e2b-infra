@@ -33,7 +33,9 @@ terraform {
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     skip_requesting_account_id  = true
+    skip_region_validation      = true
     skip_s3_checksum            = true
+    use_path_style              = true
   }
 }
 
@@ -52,7 +54,11 @@ provider "minio" {
 }
 
 provider "nomad" {
-  address      = "https://nomad.${var.domain_name}"
+  # Defaults to the Traefik-routed domain URL. Traefik is itself a Nomad job,
+  # so on first-time bootstrap this address is unreachable — override with
+  # NOMAD_ADDR (via `nomad_address` tfvar) pointing at a direct Nomad listener,
+  # typically an SSH-tunneled control server (e.g. http://localhost:4646).
+  address      = var.nomad_address != "" ? var.nomad_address : "https://nomad.${var.domain_name}"
   secret_id    = module.init.cluster.nomad_acl_token
   consul_token = module.init.cluster.consul_acl_token
 }
@@ -70,6 +76,11 @@ locals {
 
   redis_url         = var.redis_managed ? "" : "redis.service.consul:${local.redis_port}"
   redis_cluster_url = ""
+
+  # ssh_private_key may be supplied as a PEM-content string OR a path to a PEM
+  # file. Paths are preferred because Make's -include can't parse multi-line
+  # values in the env file. If the value is a readable file path, inline it.
+  ssh_private_key = fileexists(var.ssh_private_key) ? file(var.ssh_private_key) : var.ssh_private_key
 }
 
 module "init" {
@@ -106,7 +117,10 @@ module "cluster" {
   dns_servers = var.dns_servers
 
   ssh_public_key  = var.ssh_public_key
-  ssh_private_key = var.ssh_private_key
+  ssh_private_key = local.ssh_private_key
+
+  ssh_bastion_host = var.ssh_bastion_host
+  ssh_bastion_user = var.ssh_bastion_user
 
   control_server_cluster_size = var.control_server_cluster_size
   control_server_cpu_cores    = var.control_server_cpu_cores
@@ -155,15 +169,19 @@ module "cluster" {
 module "nomad" {
   source = "./nomad"
 
+  prefix      = var.prefix
   domain_name = var.domain_name
   environment = var.environment
 
   container_registry_url = var.container_registry_url
   s3_endpoint            = var.s3_endpoint
   s3_region              = var.s3_region
+  s3_access_key          = var.s3_access_key
+  s3_secret_key          = var.s3_secret_key
 
   nomad_acl_token  = module.init.cluster.nomad_acl_token
   consul_acl_token = module.init.cluster.consul_acl_token
+  nomad_address    = var.nomad_address
 
   api_node_pool    = local.api_pool_name
   api_cluster_size = var.api_cluster_size

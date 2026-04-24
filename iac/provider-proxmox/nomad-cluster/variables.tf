@@ -61,6 +61,16 @@ variable "ssh_private_key" {
   sensitive = true
 }
 
+variable "ssh_bastion_host" {
+  type    = string
+  default = ""
+}
+
+variable "ssh_bastion_user" {
+  type    = string
+  default = "root"
+}
+
 // ---
 // Control Server
 // ---

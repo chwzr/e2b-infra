@@ -107,12 +107,17 @@ resource "null_resource" "bootstrap" {
     user        = "root"
     private_key = var.ssh_private_key
     timeout     = "5m"
+
+    bastion_host        = var.ssh_bastion_host != "" ? var.ssh_bastion_host : null
+    bastion_user        = var.ssh_bastion_host != "" ? var.ssh_bastion_user : null
+    bastion_private_key = var.ssh_bastion_host != "" ? var.ssh_private_key : null
   }
 
   provisioner "file" {
     content = templatefile("${path.module}/scripts/start-clickhouse.sh", {
-      NODE_POOL                    = var.node_pool_name
-      JOB_CONSTRAINT               = "${var.job_constraint_prefix}-${count.index}"
+      NODE_POOL = var.node_pool_name
+      # Job HCL uses 1-based index for constraint matching (i+1).
+      JOB_CONSTRAINT               = "${var.job_constraint_prefix}-${count.index + 1}"
       PRIVATE_IP                   = local.private_ips[count.index]
       CONSUL_RETRY_JOIN            = jsonencode(var.consul_retry_join_ips)
       CONSUL_TOKEN                 = var.consul_acl_token

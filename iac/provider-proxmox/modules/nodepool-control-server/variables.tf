@@ -70,6 +70,17 @@ variable "ssh_private_key" {
   sensitive = true
 }
 
+variable "ssh_bastion_host" {
+  type        = string
+  default     = ""
+  description = "Optional SSH bastion/jump host for Terraform remote-exec. Leave empty to connect directly (e.g. when terraform runs on the PVE host or from a VPN-connected workstation)."
+}
+
+variable "ssh_bastion_user" {
+  type    = string
+  default = "root"
+}
+
 variable "datacenter" {
   type    = string
   default = "dc1"
@@ -81,6 +92,11 @@ variable "nomad_acl_token" {
 }
 
 variable "consul_acl_token" {
+  type      = string
+  sensitive = true
+}
+
+variable "consul_dns_request_token" {
   type      = string
   sensitive = true
 }
