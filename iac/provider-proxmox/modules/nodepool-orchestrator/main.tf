@@ -119,6 +119,14 @@ resource "null_resource" "bootstrap" {
       CONSUL_DNS_REQUEST_TOKEN     = var.consul_dns_request_token
       CONTAINER_REGISTRY_URL       = var.container_registry_url
       DATACENTER                   = var.datacenter
+
+      S3_ENDPOINT                 = var.s3_endpoint
+      S3_ACCESS_KEY               = var.s3_access_key
+      S3_SECRET_KEY               = var.s3_secret_key
+      S3_REGION                   = var.s3_region
+      FC_ENV_PIPELINE_BUCKET_NAME = var.fc_env_pipeline_bucket_name
+      FC_KERNELS_BUCKET_NAME      = var.fc_kernels_bucket_name
+      FC_VERSIONS_BUCKET_NAME     = var.fc_versions_bucket_name
     })
     destination = "/tmp/start-orchestrator.sh"
   }

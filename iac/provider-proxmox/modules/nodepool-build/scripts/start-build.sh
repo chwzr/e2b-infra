@@ -52,6 +52,38 @@ modprobe nbd
 
 mkdir -p /fc-vm
 
+# ---
+# Firecracker binaries + envd + guest kernels (downloaded from S3)
+# ---
+# The build VM runs template-manager which needs:
+#   /fc-envd/envd             — envd binary injected into each sandbox rootfs
+#   /fc-kernels/<version>/... — Firecracker guest kernels (vmlinux.bin)
+#   /fc-versions/<version>/firecracker — Firecracker VMM binaries
+# Mirrors the orchestrator VM setup; see nodepool-orchestrator/scripts.
+echo "[Setting up /fc-envd, /fc-kernels, /fc-versions]"
+mkdir -p /fc-envd /fc-kernels /fc-versions
+
+if ! command -v aws >/dev/null; then
+  apt-get install -y unzip >/dev/null
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  ( cd /tmp && unzip -q awscliv2.zip && ./aws/install >/dev/null && rm -rf awscliv2.zip aws )
+fi
+
+export AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY}"
+export AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY}"
+export AWS_DEFAULT_REGION="${S3_REGION}"
+S3_OPTS=(--endpoint-url "https://${S3_ENDPOINT}")
+
+aws s3 "$${S3_OPTS[@]}" cp "s3://${FC_ENV_PIPELINE_BUCKET_NAME}/envd" /fc-envd/envd
+chmod +x /fc-envd/envd
+
+aws s3 "$${S3_OPTS[@]}" sync "s3://${FC_KERNELS_BUCKET_NAME}/"  /fc-kernels/
+aws s3 "$${S3_OPTS[@]}" sync "s3://${FC_VERSIONS_BUCKET_NAME}/" /fc-versions/
+
+find /fc-versions -name firecracker -type f -exec chmod +x {} +
+
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
+
 mkdir -p /root/docker
 %{ if CONTAINER_REGISTRY_URL != "" }
 cat > /root/docker/config.json <<EOF

@@ -148,6 +148,14 @@ module "orchestrator" {
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
 
+  s3_endpoint                 = var.s3_endpoint
+  s3_access_key               = var.s3_access_key
+  s3_secret_key               = var.s3_secret_key
+  s3_region                   = var.s3_region
+  fc_env_pipeline_bucket_name = var.fc_env_pipeline_bucket_name
+  fc_kernels_bucket_name      = var.fc_kernels_bucket_name
+  fc_versions_bucket_name     = var.fc_versions_bucket_name
+
   depends_on = [module.control_server]
 }
 
@@ -184,6 +192,14 @@ module "build" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+
+  s3_endpoint                 = var.s3_endpoint
+  s3_access_key               = var.s3_access_key
+  s3_secret_key               = var.s3_secret_key
+  s3_region                   = var.s3_region
+  fc_env_pipeline_bucket_name = var.fc_env_pipeline_bucket_name
+  fc_kernels_bucket_name      = var.fc_kernels_bucket_name
+  fc_versions_bucket_name     = var.fc_versions_bucket_name
 
   depends_on = [module.control_server]
 }

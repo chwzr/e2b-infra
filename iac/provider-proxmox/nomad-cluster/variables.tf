@@ -71,6 +71,38 @@ variable "ssh_bastion_user" {
   default = "root"
 }
 
+# S3 + bucket names for orchestrator/build VM boot (download envd, kernels,
+# firecracker binaries).
+variable "s3_endpoint" {
+  type = string
+}
+
+variable "s3_access_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_secret_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_region" {
+  type = string
+}
+
+variable "fc_env_pipeline_bucket_name" {
+  type = string
+}
+
+variable "fc_kernels_bucket_name" {
+  type = string
+}
+
+variable "fc_versions_bucket_name" {
+  type = string
+}
+
 // ---
 // Control Server
 // ---

@@ -124,3 +124,39 @@ variable "container_registry_url" {
   type    = string
   default = ""
 }
+
+# S3-compatible bucket setup for downloading envd, kernels, firecracker binaries
+# onto the VM at boot. All three are required; without them the orchestrator
+# can't create sandboxes (template-manager also needs these on the build pool).
+variable "s3_endpoint" {
+  type = string
+}
+
+variable "s3_access_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_secret_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "s3_region" {
+  type = string
+}
+
+variable "fc_env_pipeline_bucket_name" {
+  type        = string
+  description = "S3 bucket hosting service binaries (envd, orchestrator, template-manager, etc.)"
+}
+
+variable "fc_kernels_bucket_name" {
+  type        = string
+  description = "S3 bucket hosting Firecracker guest kernels (vmlinux-*/vmlinux.bin)."
+}
+
+variable "fc_versions_bucket_name" {
+  type        = string
+  description = "S3 bucket hosting Firecracker VMM binaries (vX.Y.Z_abc/firecracker)."
+}
