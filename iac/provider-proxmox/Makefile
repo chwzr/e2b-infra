@@ -41,6 +41,10 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, SSH_BASTION_USER) \
 	$(call tfvar, NOMAD_ADDRESS) \
 	$(call tfvar, ACME_EMAIL) \
+	$(call tfvar, INGRESS_IMAGE) \
+	$(call tfvar, HCLOUD_TOKEN) \
+	$(call tfvar, HCLOUD_ZONE) \
+	$(call tfvar, HCLOUD_ZONE_ID) \
 	$(call tfvar, CONTROL_SERVER_CLUSTER_SIZE) \
 	$(call tfvar, CONTROL_SERVER_CPU_CORES) \
 	$(call tfvar, CONTROL_SERVER_MEMORY_MB) \

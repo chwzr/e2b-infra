@@ -164,6 +164,16 @@ module "cluster" {
   consul_dns_request_token     = module.init.cluster.consul_dns_request_token
 
   container_registry_url = var.container_registry_url
+
+  # S3 access + bucket names for orchestrator + build VMs to download
+  # envd / kernels / firecracker binaries on first boot.
+  s3_endpoint                 = var.s3_endpoint
+  s3_access_key               = var.s3_access_key
+  s3_secret_key               = var.s3_secret_key
+  s3_region                   = var.s3_region
+  fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
+  fc_kernels_bucket_name      = module.init.fc_kernels_bucket_name
+  fc_versions_bucket_name     = module.init.fc_versions_bucket_name
 }
 
 module "nomad" {
@@ -179,6 +189,10 @@ module "nomad" {
   s3_access_key          = var.s3_access_key
   s3_secret_key          = var.s3_secret_key
   acme_email             = var.acme_email
+  ingress_image          = var.ingress_image
+  hcloud_token           = var.hcloud_token
+  hcloud_zone            = var.hcloud_zone
+  hcloud_zone_id         = var.hcloud_zone_id
 
   nomad_acl_token  = module.init.cluster.nomad_acl_token
   consul_acl_token = module.init.cluster.consul_acl_token

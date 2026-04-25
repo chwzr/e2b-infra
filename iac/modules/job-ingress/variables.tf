@@ -42,7 +42,32 @@ variable "acme_email" {
 variable "domain_name" {
   type        = string
   default     = ""
-  description = "Domain suffix used to pre-issue ACME certs for well-known subdomains (api.DOMAIN, nomad.DOMAIN)."
+  description = "Domain suffix used to pre-issue ACME certs (wildcard when DNS-01 is available, fixed subdomains otherwise)."
+}
+
+variable "ingress_image" {
+  type        = string
+  default     = "traefik:v3.5"
+  description = "Traefik docker image. Override with the custom image when using hcloud DNS-01 (needs bash + curl + jq for the exec script)."
+}
+
+variable "hcloud_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Hetzner Cloud API token with zone.write permission for `hcloud_zone`. When set, Traefik uses DNS-01 via the hcloud API (supports wildcards). When empty, falls back to HTTP-01 (no wildcards)."
+}
+
+variable "hcloud_zone" {
+  type        = string
+  default     = ""
+  description = "Zone name managed via hcloud (e.g. datacards.dev)."
+}
+
+variable "hcloud_zone_id" {
+  type        = string
+  default     = ""
+  description = "Numeric zone id from `GET /v1/zones`."
 }
 
 variable "node_pool" {

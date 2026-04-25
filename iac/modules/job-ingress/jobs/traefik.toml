@@ -12,16 +12,22 @@
 %{ if acme_email != "" }
     [entryPoints.websecure.http.tls]
       certResolver = "letsencrypt"
-    # Pre-issue certs for well-known subdomains. Needed because the API's
-    # `api@consulcatalog` router uses HostRegexp, which doesn't give Traefik
-    # concrete domains to auto-resolve. Sandbox subdomains
-    # (`49983-<id>.DOMAIN`) are dynamic and served with the default
-    # (self-signed) cert — clients connecting to sandboxes must skip TLS
-    # verification.
+%{ if hcloud_token != "" }
+    # With hcloud DNS-01 we can issue ONE wildcard cert that covers every
+    # subdomain (sandbox URLs like 49983-<id>.DOMAIN included). The SAN list
+    # is (apex + wildcard) — Traefik requests it eagerly at startup.
+    [[entryPoints.websecure.http.tls.domains]]
+      main = "${domain_name}"
+      sans = ["*.${domain_name}"]
+%{ else }
+    # No hcloud token → fall back to HTTP-01 which can't issue wildcards, so
+    # pre-issue only the well-known subdomains. Sandbox URLs will hit
+    # Traefik's default self-signed cert (clients need TLS-skip).
     [[entryPoints.websecure.http.tls.domains]]
       main = "api.${domain_name}"
     [[entryPoints.websecure.http.tls.domains]]
       main = "nomad.${domain_name}"
+%{ endif }
 %{ endif }
   [entryPoints.traefik]
     address = ":${control_port}"
@@ -51,13 +57,21 @@
       token = "${nomad_token}"
 
 %{ if acme_email != "" }
-# Let's Encrypt via HTTP-01 challenge on the `web` entrypoint. Traefik requests
-# a new certificate on first request for each unseen Host, and caches it in
-# /local/acme.json. The challenge requires port 80 of the PVE host to DNAT to
-# the `web` entrypoint (this is already set up by setup-pve-host.sh).
+# Let's Encrypt resolver. When an hcloud DNS token is provided we use the
+# DNS-01 challenge (via an exec script that talks to the Hetzner Cloud DNS
+# API) because it's the only way to issue a wildcard cert for dynamic sandbox
+# subdomains. Without the token we fall back to HTTP-01, which can only cover
+# explicit Host()-ruled domains.
 [certificatesResolvers.letsencrypt.acme]
   email = "${acme_email}"
   storage = "/local/acme.json"
+%{ if hcloud_token != "" }
+  [certificatesResolvers.letsencrypt.acme.dnsChallenge]
+    provider = "exec"
+    # Give the Hetzner Cloud DNS a chance to propagate before lego polls.
+    delayBeforeCheck = 15
+%{ else }
   [certificatesResolvers.letsencrypt.acme.httpChallenge]
     entryPoint = "web"
+%{ endif }
 %{ endif }

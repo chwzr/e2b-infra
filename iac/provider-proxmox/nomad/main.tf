@@ -70,6 +70,10 @@ module "ingress" {
   ingress_proxy_port   = var.ingress_port
   acme_email           = var.acme_email
   domain_name          = var.domain_name
+  ingress_image        = var.ingress_image
+  hcloud_token         = var.hcloud_token
+  hcloud_zone          = var.hcloud_zone
+  hcloud_zone_id       = var.hcloud_zone_id
   traefik_config_files = var.traefik_config_files
 
   node_pool     = var.ingress_node_pool

@@ -80,9 +80,23 @@ job "ingress" {
       %{ endif }
       kill_signal  = "SIGTERM"
 
+%{ if hcloud_token != "" }
+      env {
+        # Consumed by /usr/local/bin/acme-hcloud-dns.sh (baked into the custom
+        # ingress image) when lego invokes it for the DNS-01 challenge.
+        HCLOUD_TOKEN   = "${hcloud_token}"
+        HCLOUD_ZONE    = "${hcloud_zone}"
+        HCLOUD_ZONE_ID = "${hcloud_zone_id}"
+        # Tell lego to use our script as the DNS-01 provider.
+        EXEC_PATH                = "/usr/local/bin/acme-hcloud-dns.sh"
+        EXEC_POLLING_INTERVAL    = "10s"
+        EXEC_PROPAGATION_TIMEOUT = "300s"
+      }
+%{ endif }
+
       config {
         network_mode = "host"
-        image        = "traefik:v3.5"
+        image        = "${ingress_image}"
         ports        = ["control", "ingress", "ingress_tls"]
         args = [
           "--configFile=/local/traefik.toml",
@@ -100,6 +114,7 @@ EOF
         data = "# content ignored, ensures the directory exists"
         destination = "local/config/.keep"
       }
+
 
 %{ for filename, content in config_files }
       template {

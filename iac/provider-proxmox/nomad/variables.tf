@@ -55,6 +55,28 @@ variable "acme_email" {
   description = "Contact email for Let's Encrypt. When set, Traefik requests HTTP-01 certs on-demand for any Host it serves on the websecure (TLS) entrypoint. Empty disables TLS."
 }
 
+variable "ingress_image" {
+  type        = string
+  default     = "traefik:v3.5"
+  description = "Docker image for the ingress task. Use the custom image with bash+curl+jq when wiring up hcloud DNS-01."
+}
+
+variable "hcloud_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "hcloud_zone" {
+  type    = string
+  default = ""
+}
+
+variable "hcloud_zone_id" {
+  type    = string
+  default = ""
+}
+
 variable "consul_acl_token" {
   type      = string
   sensitive = true

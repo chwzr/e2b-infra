@@ -132,7 +132,32 @@ variable "nomad_address" {
 variable "acme_email" {
   type        = string
   default     = ""
-  description = "Contact email for Let's Encrypt (HTTP-01). Empty disables TLS on the ingress."
+  description = "Contact email for Let's Encrypt. Empty disables TLS on the ingress."
+}
+
+variable "ingress_image" {
+  type        = string
+  default     = "traefik:v3.5"
+  description = "Docker image for the ingress Traefik task. Override with a custom image that includes bash+curl+jq when using the hcloud DNS-01 exec script."
+}
+
+variable "hcloud_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Hetzner Cloud API token with DNS zone write access. When set, Traefik uses DNS-01 to issue a wildcard cert for *.DOMAIN. When empty, falls back to HTTP-01."
+}
+
+variable "hcloud_zone" {
+  type        = string
+  default     = ""
+  description = "Hetzner Cloud DNS zone name (e.g. datacards.dev)."
+}
+
+variable "hcloud_zone_id" {
+  type        = string
+  default     = ""
+  description = "Hetzner Cloud DNS zone id (numeric, from `GET /v1/zones`)."
 }
 
 // ---
