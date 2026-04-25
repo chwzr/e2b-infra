@@ -191,6 +191,8 @@ module "template_manager" {
   provider_hetzner_config = {
     s3_endpoint            = "https://${var.s3_endpoint}"
     s3_region              = var.s3_region
+    s3_access_key          = var.s3_access_key
+    s3_secret_key          = var.s3_secret_key
     docker_registry_url    = var.container_registry_url
     docker_repository_name = "core/custom-environments"
   }
@@ -270,6 +272,8 @@ module "orchestrator" {
   provider_hetzner_config = {
     s3_endpoint            = "https://${var.s3_endpoint}"
     s3_region              = var.s3_region
+    s3_access_key          = var.s3_access_key
+    s3_secret_key          = var.s3_secret_key
     docker_registry_url    = var.container_registry_url
     docker_repository_name = "core/custom-environments"
   }

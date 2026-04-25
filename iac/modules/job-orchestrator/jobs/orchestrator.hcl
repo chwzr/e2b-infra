@@ -121,6 +121,8 @@ job "orchestrator-${latest_orchestrator_job_id}" {
         STORAGE_PROVIDER                  = "AWSBucket"
         S3_ENDPOINT                       = "${provider_hetzner_config.s3_endpoint}"
         AWS_REGION                        = "${provider_hetzner_config.s3_region}"
+        AWS_ACCESS_KEY_ID                 = "${provider_hetzner_config.s3_access_key}"
+        AWS_SECRET_ACCESS_KEY             = "${provider_hetzner_config.s3_secret_key}"
         DOCKER_REGISTRY_URL               = "${provider_hetzner_config.docker_registry_url}"
         DOCKER_REGISTRY_REPOSITORY_NAME   = "${provider_hetzner_config.docker_repository_name}"
 %{ endif }
