@@ -15,6 +15,10 @@ job "ingress" {
         static = "${ingress_port}"
       }
 
+      port "ingress_tls" {
+        static = "${ingress_tls_port}"
+      }
+
       port "control" {
         static = "${control_port}"
       }
@@ -79,7 +83,7 @@ job "ingress" {
       config {
         network_mode = "host"
         image        = "traefik:v3.5"
-        ports        = ["control", "ingress"]
+        ports        = ["control", "ingress", "ingress_tls"]
         args = [
           "--configFile=/local/traefik.toml",
         ]

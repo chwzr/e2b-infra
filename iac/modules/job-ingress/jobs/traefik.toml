@@ -7,6 +7,22 @@
 [entryPoints]
   [entryPoints.web]
     address = ":${ingress_port}"
+  [entryPoints.websecure]
+    address = ":${ingress_tls_port}"
+%{ if acme_email != "" }
+    [entryPoints.websecure.http.tls]
+      certResolver = "letsencrypt"
+    # Pre-issue certs for well-known subdomains. Needed because the API's
+    # `api@consulcatalog` router uses HostRegexp, which doesn't give Traefik
+    # concrete domains to auto-resolve. Sandbox subdomains
+    # (`49983-<id>.DOMAIN`) are dynamic and served with the default
+    # (self-signed) cert — clients connecting to sandboxes must skip TLS
+    # verification.
+    [[entryPoints.websecure.http.tls.domains]]
+      main = "api.${domain_name}"
+    [[entryPoints.websecure.http.tls.domains]]
+      main = "nomad.${domain_name}"
+%{ endif }
   [entryPoints.traefik]
     address = ":${control_port}"
 
@@ -33,3 +49,15 @@
     [providers.nomad.endpoint]
       address = "${nomad_endpoint}"
       token = "${nomad_token}"
+
+%{ if acme_email != "" }
+# Let's Encrypt via HTTP-01 challenge on the `web` entrypoint. Traefik requests
+# a new certificate on first request for each unseen Host, and caches it in
+# /local/acme.json. The challenge requires port 80 of the PVE host to DNAT to
+# the `web` entrypoint (this is already set up by setup-pve-host.sh).
+[certificatesResolvers.letsencrypt.acme]
+  email = "${acme_email}"
+  storage = "/local/acme.json"
+  [certificatesResolvers.letsencrypt.acme.httpChallenge]
+    entryPoint = "web"
+%{ endif }

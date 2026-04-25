@@ -49,6 +49,12 @@ variable "nomad_address" {
   description = "Override for the Nomad API address used by data.external. Leave empty to use https://nomad.$DOMAIN (Traefik-routed). Set to a direct URL (e.g. http://localhost:4646) for bootstrap when Traefik is not yet running."
 }
 
+variable "acme_email" {
+  type        = string
+  default     = ""
+  description = "Contact email for Let's Encrypt. When set, Traefik requests HTTP-01 certs on-demand for any Host it serves on the websecure (TLS) entrypoint. Empty disables TLS."
+}
+
 variable "consul_acl_token" {
   type      = string
   sensitive = true

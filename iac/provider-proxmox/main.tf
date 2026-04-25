@@ -178,6 +178,7 @@ module "nomad" {
   s3_region              = var.s3_region
   s3_access_key          = var.s3_access_key
   s3_secret_key          = var.s3_secret_key
+  acme_email             = var.acme_email
 
   nomad_acl_token  = module.init.cluster.nomad_acl_token
   consul_acl_token = module.init.cluster.consul_acl_token

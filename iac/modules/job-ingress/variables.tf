@@ -22,9 +22,27 @@ variable "ingress_proxy_port" {
   type = number
 }
 
+variable "ingress_proxy_tls_port" {
+  type        = number
+  default     = 8443
+  description = "HTTPS entrypoint (websecure) port on the ingress VM. PVE DNAT 443 → this."
+}
+
 variable "ingress_control_port" {
   type    = number
   default = 8900
+}
+
+variable "acme_email" {
+  type        = string
+  default     = ""
+  description = "Contact email for Let's Encrypt. When set, Traefik requests certs via HTTP-01 for any Host it sees. Leave empty to disable TLS on websecure."
+}
+
+variable "domain_name" {
+  type        = string
+  default     = ""
+  description = "Domain suffix used to pre-issue ACME certs for well-known subdomains (api.DOMAIN, nomad.DOMAIN)."
 }
 
 variable "node_pool" {

@@ -31,6 +31,7 @@ if [[ -z "${INGRESS_IP:-}" ]]; then
   INGRESS_IP="${_base%.*}.41"
 fi
 INGRESS_PORT="${INGRESS_PORT:-8080}"
+INGRESS_TLS_PORT="${INGRESS_TLS_PORT:-8443}"
 PUBLIC_IFACE="${PUBLIC_IFACE:-vmbr0}"
 ZONE="${ZONE:-e2bzone}"
 
@@ -117,7 +118,7 @@ else
       --subnet "$SUBNET_CIDR" --type subnet \
       --gateway "$GATEWAY_IP" --snat 1 2>&1); then
     log "created SDN subnet $SUBNET_CIDR (gateway $GATEWAY_IP, SNAT on)"
-  elif [[ $out == *"already exists"* ]]; then
+  elif [[ $out == *"already exists"* || $out == *"already defined"* ]]; then
     log "SDN subnet $SUBNET_CIDR already exists"
   else
     printf '%s\n' "$out" >&2
@@ -134,37 +135,61 @@ log "Step 4: DNAT 80/443 → $INGRESS_IP:$INGRESS_PORT"
 
 cat > /usr/local/sbin/e2b-nat-up <<'EOF'
 #!/usr/bin/env bash
-# Installed by setup-pve-host.sh. Reads: INGRESS_IP, INGRESS_PORT, PUBLIC_IFACE.
+# Installed by setup-pve-host.sh.
+# Reads: INGRESS_IP, INGRESS_PORT, INGRESS_TLS_PORT, PUBLIC_IFACE.
 set -e
 : "${INGRESS_IP:?}"
 : "${INGRESS_PORT:?}"
+: "${INGRESS_TLS_PORT:?}"
 : "${PUBLIC_IFACE:?}"
-for port in 80 443; do
-  iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$port" \
-    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT" 2>/dev/null \
-  || iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$port" \
-    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT"
+# 80 → HTTP entrypoint (also used by Let's Encrypt HTTP-01)
+iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 80 \
+  -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT" 2>/dev/null \
+|| iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 80 \
+  -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT"
+# 443 → HTTPS (websecure) entrypoint
+iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+  -j DNAT --to-destination "$INGRESS_IP:$INGRESS_TLS_PORT" 2>/dev/null \
+|| iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+  -j DNAT --to-destination "$INGRESS_IP:$INGRESS_TLS_PORT"
+# FORWARD accepts — one per port
+for p in "$INGRESS_PORT" "$INGRESS_TLS_PORT"; do
+  iptables -C FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$p" -j ACCEPT 2>/dev/null \
+  || iptables -A FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$p" -j ACCEPT
 done
-iptables -C FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$INGRESS_PORT" -j ACCEPT 2>/dev/null \
-|| iptables -A FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$INGRESS_PORT" -j ACCEPT
 EOF
 
 cat > /usr/local/sbin/e2b-nat-down <<'EOF'
 #!/usr/bin/env bash
-# Installed by setup-pve-host.sh. Reads: INGRESS_IP, INGRESS_PORT, PUBLIC_IFACE.
+# Installed by setup-pve-host.sh.
+# Reads: INGRESS_IP, INGRESS_PORT, INGRESS_TLS_PORT, PUBLIC_IFACE.
 set +e
 : "${INGRESS_IP:?}"
 : "${INGRESS_PORT:?}"
+: "${INGRESS_TLS_PORT:?}"
 : "${PUBLIC_IFACE:?}"
-for port in 80 443; do
-  while iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$port" \
-      -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT" 2>/dev/null; do
-    iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport "$port" \
-      -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT"
-  done
+# 80 → INGRESS_PORT
+while iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 80 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT" 2>/dev/null; do
+  iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 80 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT"
 done
-while iptables -C FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$INGRESS_PORT" -j ACCEPT 2>/dev/null; do
-  iptables -D FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$INGRESS_PORT" -j ACCEPT
+# 443 → INGRESS_TLS_PORT
+while iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_TLS_PORT" 2>/dev/null; do
+  iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_TLS_PORT"
+done
+# Also clean up legacy rules that forwarded 443 → INGRESS_PORT (single-port layout).
+while iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT" 2>/dev/null; do
+  iptables -t nat -D PREROUTING -i "$PUBLIC_IFACE" -p tcp --dport 443 \
+    -j DNAT --to-destination "$INGRESS_IP:$INGRESS_PORT"
+done
+for p in "$INGRESS_PORT" "$INGRESS_TLS_PORT"; do
+  while iptables -C FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$p" -j ACCEPT 2>/dev/null; do
+    iptables -D FORWARD -d "$INGRESS_IP/32" -p tcp --dport "$p" -j ACCEPT
+  done
 done
 exit 0
 EOF
@@ -182,6 +207,7 @@ Type=oneshot
 RemainAfterExit=yes
 Environment=INGRESS_IP=$INGRESS_IP
 Environment=INGRESS_PORT=$INGRESS_PORT
+Environment=INGRESS_TLS_PORT=$INGRESS_TLS_PORT
 Environment=PUBLIC_IFACE=$PUBLIC_IFACE
 ExecStart=/usr/local/sbin/e2b-nat-up
 ExecStop=/usr/local/sbin/e2b-nat-down

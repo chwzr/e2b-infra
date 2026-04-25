@@ -68,6 +68,8 @@ module "ingress" {
 
   ingress_count        = var.ingress_count
   ingress_proxy_port   = var.ingress_port
+  acme_email           = var.acme_email
+  domain_name          = var.domain_name
   traefik_config_files = var.traefik_config_files
 
   node_pool     = var.ingress_node_pool

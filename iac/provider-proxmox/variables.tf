@@ -129,6 +129,12 @@ variable "nomad_address" {
   description = "Override for the Nomad Terraform provider address. Leave empty to use the Traefik-routed domain URL. On first bootstrap, set to a direct Nomad listener (e.g. http://localhost:4646 through an SSH tunnel) because Traefik is itself a Nomad job and not yet running."
 }
 
+variable "acme_email" {
+  type        = string
+  default     = ""
+  description = "Contact email for Let's Encrypt (HTTP-01). Empty disables TLS on the ingress."
+}
+
 // ---
 // Control Server
 // ---
