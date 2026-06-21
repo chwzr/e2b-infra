@@ -20,33 +20,12 @@ EOF
 sysctl -p
 
 # ---
-# Mount data volume (second virtio-scsi disk => /dev/sdb)
+# Data directory
 # ---
-DATA_DEVICE="/dev/sdb"
+# On baremetal there is no dedicated second disk. ClickHouse data lives in a
+# plain directory on the root filesystem. If you have a separate data volume,
+# mount it at /clickhouse before running terraform apply.
 MOUNT_POINT="/clickhouse"
-mkdir -p $MOUNT_POINT
-
-for i in $(seq 1 60); do
-  if [ -e "$DATA_DEVICE" ]; then
-    break
-  fi
-  sleep 2
-done
-
-if [ ! -e "$DATA_DEVICE" ]; then
-  echo "ERROR: Data disk $DATA_DEVICE not found after 120s"
-  exit 1
-fi
-
-if ! blkid "$DATA_DEVICE" | grep -q xfs; then
-  echo "Formatting $DATA_DEVICE as XFS..."
-  mkfs.xfs "$DATA_DEVICE"
-fi
-
-mount -o noatime "$DATA_DEVICE" "$MOUNT_POINT"
-DEVICE_UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
-echo "UUID=$DEVICE_UUID $MOUNT_POINT xfs noatime 0 2" >> /etc/fstab
-
 mkdir -p $MOUNT_POINT/data
 
 # ---
