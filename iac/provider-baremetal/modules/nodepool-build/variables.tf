@@ -2,63 +2,25 @@ variable "prefix" {
   type = string
 }
 
-variable "cluster_size" {
-  type    = number
-  default = 1
+variable "private_ips" {
+  type = list(string)
 }
 
-variable "pve_node" {
+variable "datacenter" {
+  type    = string
+  default = "dc1"
+}
+
+variable "consul_version" {
   type = string
 }
 
-variable "pve_storage_pool" {
+variable "nomad_version" {
   type = string
 }
 
-variable "base_template" {
+variable "vault_version" {
   type = string
-}
-
-variable "base_template_vm_id" {
-  type = number
-}
-
-variable "cpu_cores" {
-  type    = number
-  default = 8
-}
-
-variable "memory_mb" {
-  type    = number
-  default = 16384
-}
-
-variable "disk_size_gb" {
-  type    = number
-  default = 100
-}
-
-variable "bridge" {
-  type = string
-}
-
-variable "subnet_cidr" {
-  type = string
-}
-
-variable "gateway_ip" {
-  type = string
-}
-
-variable "dns_servers" {
-  type    = list(string)
-  default = ["1.1.1.1", "8.8.8.8"]
-}
-
-variable "ip_offset" {
-  type        = number
-  default     = 101
-  description = "Private subnet IP offset for build pool (so .101, .102, ...) — disjoint from orchestrator range"
 }
 
 variable "node_pool_name" {
@@ -73,11 +35,7 @@ variable "node_labels" {
 
 variable "base_hugepages_percentage" {
   type    = number
-  default = 70
-}
-
-variable "ssh_public_key" {
-  type = string
+  default = 80
 }
 
 variable "ssh_private_key" {
@@ -86,19 +44,13 @@ variable "ssh_private_key" {
 }
 
 variable "ssh_bastion_host" {
-  type        = string
-  default     = ""
-  description = "Optional SSH bastion/jump host for Terraform remote-exec. Leave empty to connect directly (e.g. when terraform runs on the PVE host or from a VPN-connected workstation)."
+  type    = string
+  default = ""
 }
 
 variable "ssh_bastion_user" {
   type    = string
   default = "root"
-}
-
-variable "datacenter" {
-  type    = string
-  default = "dc1"
 }
 
 variable "consul_retry_join_ips" {
