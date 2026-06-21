@@ -8,7 +8,7 @@ resource "random_password" "volume_token_key" {
 }
 
 locals {
-  # Proxmox setup is functionally identical to Hetzner for the shared Nomad
+  # Baremetal setup is functionally identical to Hetzner for the shared Nomad
   # job modules (S3-compatible storage, custom Docker registry), so we pass
   # provider_name = "hetzner" to reuse those config branches.
   provider_name = "hetzner"
