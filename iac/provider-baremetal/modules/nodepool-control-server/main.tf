@@ -7,7 +7,8 @@ terraform {
 }
 
 locals {
-  setup_dir = "${path.module}/../../../nomad-cluster-disk-image/setup"
+  setup_dir   = "${path.module}/../../../nomad-cluster-disk-image/setup"
+  private_ips = var.private_ips
 }
 
 resource "null_resource" "bootstrap" {
