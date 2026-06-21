@@ -1,10 +1,5 @@
 terraform {
   required_providers {
-    proxmox = {
-      source  = "bpg/proxmox"
-      version = "~> 0.82"
-    }
-
     nomad = {
       source  = "hashicorp/nomad"
       version = "2.1.0"
@@ -39,12 +34,6 @@ terraform {
   }
 }
 
-provider "proxmox" {
-  endpoint  = var.proxmox_api_url
-  api_token = "${var.proxmox_api_token_id}=${var.proxmox_api_token_secret}"
-  insecure  = var.proxmox_tls_insecure
-}
-
 provider "minio" {
   minio_server   = var.s3_endpoint
   minio_user     = var.s3_access_key
@@ -77,9 +66,8 @@ locals {
   redis_url         = var.redis_managed ? "" : "redis.service.consul:${local.redis_port}"
   redis_cluster_url = ""
 
-  # ssh_private_key may be supplied as a PEM-content string OR a path to a PEM
-  # file. Paths are preferred because Make's -include can't parse multi-line
-  # values in the env file. If the value is a readable file path, inline it.
+  # ssh_private_key may be supplied as PEM content OR a path to a PEM file.
+  # Paths are preferred because Make's -include can't parse multi-line values.
   ssh_private_key = fileexists(var.ssh_private_key) ? file(var.ssh_private_key) : var.ssh_private_key
 }
 
@@ -106,55 +94,26 @@ module "cluster" {
   prefix     = var.prefix
   datacenter = var.datacenter
 
-  pve_node            = var.pve_node
-  pve_storage_pool    = var.pve_storage_pool
-  base_template       = var.base_template
-  base_template_vm_id = var.base_template_vm_id
+  control_server_ips = var.control_server_ips
+  api_ips            = var.api_ips
+  ingress_ips        = var.ingress_ips
+  orchestrator_ips   = var.orchestrator_ips
+  build_ips          = var.build_ips
+  clickhouse_ips     = var.clickhouse_ips
 
-  bridge      = var.bridge
-  subnet_cidr = var.subnet_cidr
-  gateway_ip  = var.gateway_ip
-  dns_servers = var.dns_servers
+  consul_version = var.consul_version
+  nomad_version  = var.nomad_version
+  vault_version  = var.vault_version
 
-  ssh_public_key  = var.ssh_public_key
-  ssh_private_key = local.ssh_private_key
-
+  ssh_private_key  = local.ssh_private_key
   ssh_bastion_host = var.ssh_bastion_host
   ssh_bastion_user = var.ssh_bastion_user
 
-  control_server_cluster_size = var.control_server_cluster_size
-  control_server_cpu_cores    = var.control_server_cpu_cores
-  control_server_memory_mb    = var.control_server_memory_mb
-  control_server_disk_size_gb = var.control_server_disk_size_gb
-
-  api_cluster_size   = var.api_cluster_size
-  api_cpu_cores      = var.api_cpu_cores
-  api_memory_mb      = var.api_memory_mb
-  api_disk_size_gb   = var.api_disk_size_gb
-  api_node_pool_name = local.api_pool_name
-
-  ingress_cpu_cores    = var.ingress_cpu_cores
-  ingress_memory_mb    = var.ingress_memory_mb
-  ingress_disk_size_gb = var.ingress_disk_size_gb
-  ingress_node_pool    = local.ingress_pool_name
-
-  orchestrator_cluster_size   = var.orchestrator_cluster_size
-  orchestrator_cpu_cores      = var.orchestrator_cpu_cores
-  orchestrator_memory_mb      = var.orchestrator_memory_mb
-  orchestrator_disk_size_gb   = var.orchestrator_disk_size_gb
+  api_node_pool_name          = local.api_pool_name
+  ingress_node_pool           = local.ingress_pool_name
   orchestrator_node_pool_name = local.orchestrator_pool
+  build_node_pool_name        = local.build_pool_name
 
-  build_cluster_size   = var.build_cluster_size
-  build_cpu_cores      = var.build_cpu_cores
-  build_memory_mb      = var.build_memory_mb
-  build_disk_size_gb   = var.build_disk_size_gb
-  build_node_pool_name = local.build_pool_name
-
-  clickhouse_cluster_size          = var.clickhouse_cluster_size
-  clickhouse_cpu_cores             = var.clickhouse_cpu_cores
-  clickhouse_memory_mb             = var.clickhouse_memory_mb
-  clickhouse_disk_size_gb          = var.clickhouse_disk_size_gb
-  clickhouse_data_volume_size_gb   = var.clickhouse_data_volume_size_gb
   clickhouse_node_pool_name        = local.clickhouse_pool_name
   clickhouse_job_constraint_prefix = local.clickhouse_pool_name
 
@@ -165,8 +124,6 @@ module "cluster" {
 
   container_registry_url = var.container_registry_url
 
-  # S3 access + bucket names for orchestrator + build VMs to download
-  # envd / kernels / firecracker binaries on first boot.
   s3_endpoint                 = var.s3_endpoint
   s3_access_key               = var.s3_access_key
   s3_secret_key               = var.s3_secret_key
@@ -199,7 +156,7 @@ module "nomad" {
   nomad_address    = var.nomad_address
 
   api_node_pool    = local.api_pool_name
-  api_cluster_size = var.api_cluster_size
+  api_cluster_size = length(var.api_ips)
 
   ingress_node_pool = local.ingress_pool_name
   ingress_port      = local.ingress_port
@@ -211,7 +168,7 @@ module "nomad" {
   redis_port    = local.redis_port
   redis_url     = local.redis_url
 
-  clickhouse_cluster_size        = var.clickhouse_cluster_size
+  clickhouse_cluster_size        = length(var.clickhouse_ips)
   clickhouse_username            = module.init.clickhouse.username
   clickhouse_password            = module.init.clickhouse.password
   clickhouse_server_secret       = module.init.clickhouse.server_secret
@@ -235,7 +192,7 @@ module "nomad" {
   loki_bucket_name = module.init.loki_bucket_name
 
   build_node_pool             = local.build_pool_name
-  build_cluster_size          = var.build_cluster_size
+  build_cluster_size          = length(var.build_ips)
   api_secret                  = module.init.api_secret
   fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
   template_bucket_name        = module.init.fc_template_bucket_name

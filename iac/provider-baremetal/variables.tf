@@ -1,6 +1,6 @@
 variable "domain_name" {
   type        = string
-  description = "Domain name used for Traefik Host routing and service URLs. DNS records are created manually (not by Terraform). Point *.<domain_name> at the PVE host's public IP (the host DNATs 80/443 to the ingress VM)."
+  description = "Domain name used for Traefik Host routing and service URLs. DNS records are created manually. Point *.<domain_name> at the ingress server (or a load balancer in front of it)."
 }
 
 variable "prefix" {
@@ -19,102 +19,75 @@ variable "datacenter" {
 }
 
 // ---
-// Proxmox provider
+// Pre-provisioned servers (private IPs per nodepool)
 // ---
+// Each server is an existing Ubuntu 24.04 host with the deploy SSH key on root.
+// The IP given here is the private address used for BOTH ssh and Consul/Nomad
+// advertise + retry_join. The deploy host must be able to reach these IPs.
 
-variable "proxmox_api_url" {
-  type        = string
-  description = "Proxmox API URL, e.g. https://pve.example.com:8006/api2/json"
-}
-
-variable "proxmox_api_token_id" {
-  type        = string
-  description = "Proxmox API token ID (format: user@realm!token_name)"
-}
-
-variable "proxmox_api_token_secret" {
-  type      = string
-  sensitive = true
-}
-
-variable "proxmox_tls_insecure" {
-  type        = bool
-  default     = false
-  description = "Skip TLS verification when talking to the Proxmox API"
-}
-
-variable "pve_node" {
-  type        = string
-  description = "Target PVE node name (single-host deployment)"
-}
-
-variable "pve_storage_pool" {
-  type        = string
-  description = "Proxmox storage pool where VM disks are created, e.g. local-lvm, local-zfs, ceph"
-  default     = "local-lvm"
-}
-
-variable "base_template" {
-  type        = string
-  description = "Name of the Packer-built Ubuntu 24.04 VM template used as the clone source for all node pools"
-  default     = "e2b-nomad-cluster"
-}
-
-variable "base_template_vm_id" {
-  type        = number
-  description = "Numeric PVE VM ID of the Packer-built base template. Must match the `vm_id` passed to `packer build`. The bpg/proxmox provider clones by VM ID, not name."
-}
-
-// ---
-// Networking
-// ---
-// Single private bridge. All VMs (including the ingress VM) live on this
-// bridge with private IPs. External traffic reaches the ingress VM via a
-// DNAT rule on the PVE host (see self-host-proxmox.md step 7).
-
-variable "bridge" {
-  type        = string
-  description = "Proxmox bridge for cluster VMs. Pre-configured on the PVE host; host handles egress (e.g. masquerade)."
-  default     = "vmbr1"
-}
-
-variable "subnet_cidr" {
-  type        = string
-  description = "Subnet CIDR for all cluster VMs, e.g. 10.0.0.0/24"
-  default     = "10.0.0.0/24"
-}
-
-variable "gateway_ip" {
-  type        = string
-  description = "Subnet gateway IP (usually the Proxmox host on the cluster bridge), e.g. 10.0.0.1"
-  default     = "10.0.0.1"
-}
-
-variable "dns_servers" {
+variable "control_server_ips" {
   type        = list(string)
-  description = "DNS servers used by cluster VMs (before Consul DNS takes over)"
-  default     = ["1.1.1.1", "8.8.8.8"]
+  description = "Private IPs of the Nomad/Consul control servers."
+}
+
+variable "api_ips" {
+  type        = list(string)
+  description = "Private IPs of the API nodepool servers."
+}
+
+variable "ingress_ips" {
+  type        = list(string)
+  description = "Private IPs of the ingress (Traefik) servers. Element 0 is the primary."
+}
+
+variable "orchestrator_ips" {
+  type        = list(string)
+  description = "Private IPs of the orchestrator servers (require /dev/kvm)."
+}
+
+variable "build_ips" {
+  type        = list(string)
+  description = "Private IPs of the build (template-manager) servers (require /dev/kvm)."
+}
+
+variable "clickhouse_ips" {
+  type        = list(string)
+  description = "Private IPs of the ClickHouse servers."
+}
+
+// ---
+// Tool versions baked at deploy time by setup-base.sh
+// ---
+
+variable "consul_version" {
+  type    = string
+  default = "1.16.2"
+}
+
+variable "nomad_version" {
+  type    = string
+  default = "1.6.2"
+}
+
+variable "vault_version" {
+  type    = string
+  default = "1.20.3"
 }
 
 // ---
 // SSH access
 // ---
 
-variable "ssh_public_key" {
-  type        = string
-  description = "SSH public key baked into VMs via cloud-init"
-}
-
 variable "ssh_private_key" {
   type        = string
   sensitive   = true
-  description = "SSH private key Terraform uses to bootstrap VMs via remote-exec"
+  description = "SSH private key (PEM content OR a path to a PEM file) Terraform uses to bootstrap servers over SSH as root."
 }
 
 variable "ssh_bastion_host" {
   type        = string
   default     = ""
-  description = "Optional SSH bastion/jump host for Terraform remote-exec. Leave empty to connect directly (e.g. when terraform runs on the PVE host or a workstation with VPN into the cluster subnet)."
+  description = "Optional SSH bastion/jump host. Leave empty to connect directly (deploy host has network access to the private IPs)."
 }
 
 variable "ssh_bastion_user" {
@@ -138,7 +111,7 @@ variable "acme_email" {
 variable "ingress_image" {
   type        = string
   default     = "traefik:v3.5"
-  description = "Docker image for the ingress Traefik task. Override with a custom image that includes bash+curl+jq when using the hcloud DNS-01 exec script."
+  description = "Docker image for the ingress Traefik task."
 }
 
 variable "hcloud_token" {
@@ -151,162 +124,18 @@ variable "hcloud_token" {
 variable "hcloud_zone" {
   type        = string
   default     = ""
-  description = "Hetzner Cloud DNS zone name (e.g. datacards.dev)."
+  description = "Hetzner Cloud DNS zone name (e.g. example.dev)."
 }
 
 variable "hcloud_zone_id" {
   type        = string
   default     = ""
-  description = "Hetzner Cloud DNS zone id (numeric, from `GET /v1/zones`)."
-}
-
-// ---
-// Control Server
-// ---
-
-variable "control_server_cluster_size" {
-  type    = number
-  default = 3
-}
-
-variable "control_server_cpu_cores" {
-  type    = number
-  default = 2
-}
-
-variable "control_server_memory_mb" {
-  type    = number
-  default = 4096
-}
-
-variable "control_server_disk_size_gb" {
-  type    = number
-  default = 20
-}
-
-// ---
-// API
-// ---
-
-variable "api_cluster_size" {
-  type    = number
-  default = 1
-}
-
-variable "api_cpu_cores" {
-  type    = number
-  default = 2
-}
-
-variable "api_memory_mb" {
-  type    = number
-  default = 4096
-}
-
-variable "api_disk_size_gb" {
-  type    = number
-  default = 20
-}
-
-// ---
-// Ingress (Traefik)
-// ---
-
-variable "ingress_cpu_cores" {
-  type    = number
-  default = 2
-}
-
-variable "ingress_memory_mb" {
-  type    = number
-  default = 2048
-}
-
-variable "ingress_disk_size_gb" {
-  type    = number
-  default = 20
+  description = "Hetzner Cloud DNS zone id (numeric)."
 }
 
 variable "client_proxy_count" {
   type    = number
   default = 1
-}
-
-// ---
-// Orchestrator (KVM nested virt)
-// ---
-
-variable "orchestrator_cluster_size" {
-  type    = number
-  default = 1
-}
-
-variable "orchestrator_cpu_cores" {
-  type    = number
-  default = 8
-}
-
-variable "orchestrator_memory_mb" {
-  type    = number
-  default = 16384
-}
-
-variable "orchestrator_disk_size_gb" {
-  type    = number
-  default = 100
-}
-
-// ---
-// Build pool (KVM nested virt)
-// ---
-
-variable "build_cluster_size" {
-  type    = number
-  default = 1
-}
-
-variable "build_cpu_cores" {
-  type    = number
-  default = 8
-}
-
-variable "build_memory_mb" {
-  type    = number
-  default = 16384
-}
-
-variable "build_disk_size_gb" {
-  type    = number
-  default = 100
-}
-
-// ---
-// ClickHouse
-// ---
-
-variable "clickhouse_cluster_size" {
-  type    = number
-  default = 1
-}
-
-variable "clickhouse_cpu_cores" {
-  type    = number
-  default = 4
-}
-
-variable "clickhouse_memory_mb" {
-  type    = number
-  default = 8192
-}
-
-variable "clickhouse_disk_size_gb" {
-  type    = number
-  default = 20
-}
-
-variable "clickhouse_data_volume_size_gb" {
-  type    = number
-  default = 100
 }
 
 // ---
@@ -348,7 +177,7 @@ variable "s3_region" {
 
 variable "container_registry_url" {
   type        = string
-  description = "URL of the Docker registry that hosts service images (api, orchestrator, client-proxy, etc.)"
+  description = "URL of the Docker registry that hosts service images."
   default     = ""
 }
 
