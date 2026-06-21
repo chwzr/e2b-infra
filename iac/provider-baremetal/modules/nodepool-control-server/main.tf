@@ -1,8 +1,5 @@
 terraform {
   required_providers {
-    proxmox = {
-      source = "bpg/proxmox"
-    }
     null = {
       source = "hashicorp/null"
     }
@@ -10,91 +7,21 @@ terraform {
 }
 
 locals {
-  subnet_mask = split("/", var.subnet_cidr)[1]
-  private_ips = [for i in range(var.cluster_size) : cidrhost(var.subnet_cidr, var.ip_offset + i)]
-}
-
-resource "proxmox_virtual_environment_vm" "control_server" {
-  count = var.cluster_size
-
-  name      = "${var.prefix}server-${count.index}"
-  node_name = var.pve_node
-  on_boot   = true
-
-  agent {
-    enabled = true
-  }
-
-  clone {
-    vm_id = var.base_template_vm_id
-    full  = true
-  }
-
-  cpu {
-    type    = "host"
-    sockets = 1
-    cores   = var.cpu_cores
-  }
-
-  memory {
-    dedicated = var.memory_mb
-  }
-
-  scsi_hardware = "virtio-scsi-pci"
-  boot_order    = ["scsi0"]
-
-  disk {
-    interface    = "scsi0"
-    datastore_id = var.pve_storage_pool
-    size         = var.disk_size_gb
-    iothread     = true
-  }
-
-  network_device {
-    bridge = var.bridge
-    model  = "virtio"
-    mtu    = 1500
-  }
-
-  initialization {
-    datastore_id = var.pve_storage_pool
-
-    user_account {
-      username = "root"
-      keys     = [var.ssh_public_key]
-    }
-
-    ip_config {
-      ipv4 {
-        address = "${local.private_ips[count.index]}/${local.subnet_mask}"
-        gateway = var.gateway_ip
-      }
-    }
-
-    dns {
-      servers = var.dns_servers
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [
-      initialization,
-      network_device,
-    ]
-  }
+  setup_dir = "${path.module}/../../../nomad-cluster-disk-image/setup"
 }
 
 resource "null_resource" "bootstrap" {
-  count = var.cluster_size
+  count = length(var.private_ips)
 
   triggers = {
+    setup_hash  = filesha256("${local.setup_dir}/setup-base.sh")
     script_hash = filesha256("${path.module}/scripts/start-server.sh")
-    vm_id       = proxmox_virtual_environment_vm.control_server[count.index].id
+    host        = var.private_ips[count.index]
   }
 
   connection {
     type        = "ssh"
-    host        = local.private_ips[count.index]
+    host        = var.private_ips[count.index]
     user        = "root"
     private_key = var.ssh_private_key
     timeout     = "5m"
@@ -104,11 +31,25 @@ resource "null_resource" "bootstrap" {
     bastion_private_key = var.ssh_bastion_host != "" ? var.ssh_private_key : null
   }
 
+  # 1. Upload + run the shared base setup (idempotent).
+  provisioner "file" {
+    source      = local.setup_dir
+    destination = "/tmp"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /tmp/setup/setup-base.sh /tmp/setup/install-consul.sh /tmp/setup/install-nomad.sh /tmp/setup/install-vault.sh",
+      "CONSUL_VERSION='${var.consul_version}' NOMAD_VERSION='${var.nomad_version}' VAULT_VERSION='${var.vault_version}' /tmp/setup/setup-base.sh control-server",
+    ]
+  }
+
+  # 2. Upload + run the role start script.
   provisioner "file" {
     content = templatefile("${path.module}/scripts/start-server.sh", {
-      NUM_SERVERS                  = var.cluster_size
-      PRIVATE_IP                   = local.private_ips[count.index]
-      CONSUL_RETRY_JOIN            = jsonencode(local.private_ips)
+      NUM_SERVERS                  = length(var.private_ips)
+      PRIVATE_IP                   = var.private_ips[count.index]
+      CONSUL_RETRY_JOIN            = jsonencode(var.private_ips)
       NOMAD_TOKEN                  = var.nomad_acl_token
       CONSUL_TOKEN                 = var.consul_acl_token
       CONSUL_DNS_REQUEST_TOKEN     = var.consul_dns_request_token
@@ -124,6 +65,4 @@ resource "null_resource" "bootstrap" {
       "/tmp/start-server.sh",
     ]
   }
-
-  depends_on = [proxmox_virtual_environment_vm.control_server]
 }

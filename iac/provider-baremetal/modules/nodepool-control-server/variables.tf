@@ -2,66 +2,24 @@ variable "prefix" {
   type = string
 }
 
-variable "cluster_size" {
-  type    = number
-  default = 3
+variable "private_ips" {
+  type = list(string)
 }
 
-variable "pve_node" {
+variable "datacenter" {
+  type    = string
+  default = "dc1"
+}
+
+variable "consul_version" {
   type = string
 }
 
-variable "pve_storage_pool" {
+variable "nomad_version" {
   type = string
 }
 
-variable "base_template" {
-  type = string
-}
-
-variable "base_template_vm_id" {
-  type = number
-}
-
-variable "cpu_cores" {
-  type    = number
-  default = 2
-}
-
-variable "memory_mb" {
-  type    = number
-  default = 4096
-}
-
-variable "disk_size_gb" {
-  type    = number
-  default = 20
-}
-
-variable "bridge" {
-  type = string
-}
-
-variable "subnet_cidr" {
-  type = string
-}
-
-variable "gateway_ip" {
-  type = string
-}
-
-variable "dns_servers" {
-  type    = list(string)
-  default = ["1.1.1.1", "8.8.8.8"]
-}
-
-variable "ip_offset" {
-  type        = number
-  default     = 11
-  description = "First usable IP offset in private subnet for this pool (so IPs become .11, .12, .13)"
-}
-
-variable "ssh_public_key" {
+variable "vault_version" {
   type = string
 }
 
@@ -71,19 +29,13 @@ variable "ssh_private_key" {
 }
 
 variable "ssh_bastion_host" {
-  type        = string
-  default     = ""
-  description = "Optional SSH bastion/jump host for Terraform remote-exec. Leave empty to connect directly (e.g. when terraform runs on the PVE host or from a VPN-connected workstation)."
+  type    = string
+  default = ""
 }
 
 variable "ssh_bastion_user" {
   type    = string
   default = "root"
-}
-
-variable "datacenter" {
-  type    = string
-  default = "dc1"
 }
 
 variable "nomad_acl_token" {
@@ -96,12 +48,12 @@ variable "consul_acl_token" {
   sensitive = true
 }
 
-variable "consul_dns_request_token" {
+variable "consul_gossip_encryption_key" {
   type      = string
   sensitive = true
 }
 
-variable "consul_gossip_encryption_key" {
+variable "consul_dns_request_token" {
   type      = string
   sensitive = true
 }
