@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for build (template-manager) VMs on Proxmox — nested KVM.
+# Bootstrap script for build (template-manager) nodes (baremetal; nested KVM).
 # Identical to orchestrator bootstrap except different default hugepages percentage.
 
 set -e

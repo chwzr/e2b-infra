@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for Nomad/Consul control-server VMs on Proxmox.
+# Bootstrap script for Nomad/Consul control-server nodes (baremetal).
 # Configures and starts Consul and Nomad in server mode. Assumes the base VM
 # template already has Consul + Nomad binaries installed (see Packer build).
 

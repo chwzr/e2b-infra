@@ -58,7 +58,7 @@ if ! command -v docker >/dev/null 2>&1; then
   sh /tmp/get-docker.sh
   rm -f /tmp/get-docker.sh
 fi
-systemctl enable docker
+systemctl enable --now docker
 
 # --- 4. Go ---
 if ! command -v go >/dev/null 2>&1; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for ClickHouse VMs on Proxmox.
+# Bootstrap script for ClickHouse nodes (baremetal).
 # Formats + mounts the second virtio disk as the ClickHouse data volume,
 # then registers a Consul client + Nomad client with per-index job constraint.
 

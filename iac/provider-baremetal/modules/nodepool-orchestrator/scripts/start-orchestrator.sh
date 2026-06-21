@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for orchestrator VMs on Proxmox (nested KVM, Firecracker).
+# Bootstrap script for orchestrator nodes (baremetal; KVM + Firecracker).
 # Configures hugepages, swap, NBD, Consul client, Nomad client.
 
 set -e
@@ -59,9 +59,8 @@ ACTION=="add|change", KERNEL=="nbd*", OPTIONS:="nowatch"
 EOH
 udevadm control --reload-rules
 udevadm trigger
-# Persist module load across reboots (Proxmox reboots the VM on any hardware
-# config change) and pin nbds_max so the orchestrator's device pool sizing is
-# stable.
+# Persist module load across reboots and pin nbds_max so the orchestrator's
+# device pool sizing is stable.
 echo 'nbd' > /etc/modules-load.d/nbd.conf
 echo 'options nbd nbds_max=4096' > /etc/modprobe.d/nbd.conf
 modprobe -r nbd 2>/dev/null || true

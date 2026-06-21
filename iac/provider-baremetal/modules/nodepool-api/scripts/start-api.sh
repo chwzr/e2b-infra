@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap script for API VMs on Proxmox.
+# Bootstrap script for API nodes (baremetal).
 # Consul client + Nomad client registered in the api node pool.
 
 set -e

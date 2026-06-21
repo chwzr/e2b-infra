@@ -64,3 +64,8 @@ advertise + retry_join. This provider does not manage firewalls — restrict the
 cluster ports (Consul 8300/8301/8500/8600, Nomad 4646-4648) to the private
 network yourself. Point public 80/443 at the ingress host (`ingress_private_ip`
 output) or a load balancer in front of it.
+
+## Upgrades & security notes
+
+- **Tool-version upgrades (Consul/Nomad/Vault)** only take effect on the _first_ bootstrap of a host: `setup-base.sh` guards each install with `command -v`, and re-bootstrap only triggers when the host IP, `setup-base.sh`, or the role `start-*.sh` changes. Upgrading Consul/Nomad/Vault on already-provisioned hosts is a manual operation (update the binary and restart the service in-place).
+- **SSH host keys are not verified** by Terraform's SSH provisioner — security relies on the trusted private network. Restrict SSH access to the cluster network accordingly.
