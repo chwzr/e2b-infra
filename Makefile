@@ -123,7 +123,7 @@ ifeq ($(PROVIDER),aws)
 	aws s3 cp ./.firecrackers/ s3://${AWS_BUCKET_PREFIX}fc-versions/ --recursive --profile ${AWS_PROFILE}
 	rm -rf ./.kernels
 	rm -rf ./.firecrackers
-else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
 	mkdir -p ./.kernels
 	mkdir -p ./.firecrackers
 	aws s3 cp s3://e2b-prod-public-builds/kernels/ ./.kernels/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
