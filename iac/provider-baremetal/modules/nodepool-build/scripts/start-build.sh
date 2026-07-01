@@ -97,41 +97,53 @@ EOF
 echo '{}' > /root/docker/config.json
 %{ endif }
 
-echo "[Setting up huge pages]"
-mkdir -p /mnt/hugepages
-mountpoint -q /mnt/hugepages || mount -t hugetlbfs none /mnt/hugepages
-
+echo "[Setting up huge pages + runtime mounts via systemd oneshot]"
+# nr_hugepages and the hugetlbfs/tmpfs mounts do NOT survive a reboot, and this
+# bootstrap only runs once (at provision time). Install a systemd oneshot that
+# re-applies them on every boot BEFORE Nomad starts, so Firecracker always has
+# hugepage-backed guest memory. Otherwise, after any reboot, template builds fail
+# with FC "Cannot load kernel ... invalid memory configuration".
+cat > /usr/local/bin/e2b-node-runtime.sh <<'RUNTIME'
+#!/bin/bash
+set -e
+# Runtime mounts (idempotent)
+mkdir -p /mnt/hugepages /mnt/snapshot-cache
+mountpoint -q /mnt/hugepages      || mount -t hugetlbfs none /mnt/hugepages
+mountpoint -q /mnt/snapshot-cache || mount -t tmpfs -o size=65G tmpfs /mnt/snapshot-cache
+# Hugepage allocation (RAM-dependent; recomputed each boot)
 available_ram=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-available_ram=$(($available_ram / 1024))
-
+available_ram=$((available_ram / 1024))
 min_normal_ram=$((4 * 1024))
-min_normal_percentage_ram=$(($available_ram * 16 / 100))
+min_normal_percentage_ram=$((available_ram * 16 / 100))
 max_normal_ram=$((42 * 1024))
+reserved=$(( min_normal_ram > min_normal_percentage_ram ? min_normal_ram : min_normal_percentage_ram ))
+reserved=$(( reserved < max_normal_ram ? reserved : max_normal_ram ))
+hugepages_ram=$((available_ram - reserved))
+if (( hugepages_ram % 2 )); then hugepages_ram=$((hugepages_ram - 1)); fi
+hugepages=$((hugepages_ram / 2))
+base=$(( hugepages * ${BASE_HUGEPAGES_PERCENTAGE} / 100 ))
+over=$(( hugepages * (100 - ${BASE_HUGEPAGES_PERCENTAGE}) / 100 ))
+echo "$base" > /proc/sys/vm/nr_hugepages
+echo "$over" > /proc/sys/vm/nr_overcommit_hugepages
+echo "e2b-node-runtime: nr_hugepages=$(cat /proc/sys/vm/nr_hugepages) nr_overcommit=$over"
+RUNTIME
+chmod +x /usr/local/bin/e2b-node-runtime.sh
 
-max() { if (($1 > $2)); then echo "$1"; else echo "$2"; fi; }
-min() { if (($1 < $2)); then echo "$1"; else echo "$2"; fi; }
-ensure_even() { if (($1 % 2 == 0)); then echo "$1"; else echo $(($1 - 1)); fi; }
-remove_decimal() { echo "$1" | sed 's/\..*//'; }
+cat > /etc/systemd/system/e2b-node-runtime.service <<'UNIT'
+[Unit]
+Description=E2B node runtime setup (hugepages + tmpfs/hugetlbfs mounts)
+After=local-fs.target
+Before=nomad.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/e2b-node-runtime.sh
+[Install]
+WantedBy=multi-user.target
+UNIT
 
-reserved_normal_ram=$(max $min_normal_ram $min_normal_percentage_ram)
-reserved_normal_ram=$(min $reserved_normal_ram $max_normal_ram)
-
-hugepages_ram=$(($available_ram - $reserved_normal_ram))
-hugepages_ram=$(remove_decimal $hugepages_ram)
-hugepages_ram=$(ensure_even $hugepages_ram)
-
-hugepage_size_in_mib=2
-hugepages=$(($hugepages_ram / $hugepage_size_in_mib))
-
-base_hugepages_percentage=${BASE_HUGEPAGES_PERCENTAGE}
-base_hugepages=$(($hugepages * $base_hugepages_percentage / 100))
-base_hugepages=$(remove_decimal $base_hugepages)
-echo $base_hugepages > /proc/sys/vm/nr_hugepages
-
-overcommitment_hugepages_percentage=$((100 - $base_hugepages_percentage))
-overcommitment_hugepages=$(($hugepages * $overcommitment_hugepages_percentage / 100))
-overcommitment_hugepages=$(remove_decimal $overcommitment_hugepages)
-echo $overcommitment_hugepages > /proc/sys/vm/nr_overcommit_hugepages
+systemctl daemon-reload
+systemctl enable --now e2b-node-runtime.service
 
 mkdir -p /etc/systemd/resolved.conf.d/
 cat > /etc/systemd/resolved.conf.d/consul.conf <<EOF
