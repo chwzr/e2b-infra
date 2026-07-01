@@ -171,6 +171,33 @@ variable "s3_region" {
   default = "fsn1"
 }
 
+// Runtime object storage for the APP buckets (templates, build-cache,
+// env-pipeline, kernels, versions, loki, clickhouse-backups). Decoupled from the
+// Terraform-state S3 above so the state bucket can live on a different provider.
+// When left empty each falls back to the corresponding s3_* value.
+variable "app_s3_endpoint" {
+  type        = string
+  description = "S3 endpoint for the runtime app buckets. Empty = use s3_endpoint (state provider)."
+  default     = ""
+}
+
+variable "app_s3_access_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "app_s3_secret_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "app_s3_region" {
+  type    = string
+  default = ""
+}
+
 // ---
 // Container Registry
 // ---
