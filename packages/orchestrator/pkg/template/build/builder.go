@@ -168,6 +168,16 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 		switch {
 		case e != nil:
 			l.Error(ctx, fmt.Sprintf("Build failed: %v", builderrors.UnwrapUserError(e).GetMessage()))
+			// Internal (non-user) errors are surfaced to the user only as a generic
+			// placeholder (InternalErrorMessage), which hides the real cause from
+			// operator logs. Report the full underlying error to telemetry and the
+			// orchestrator logs so build failures stay debuggable server-side.
+			if !builderrors.IsUserError(e) {
+				telemetry.ReportCriticalError(ctx, "internal template build error", e,
+					telemetry.WithTemplateID(cfg.TemplateID),
+					telemetry.WithBuildID(paths.BuildID),
+				)
+			}
 		default:
 			l.Info(ctx, fmt.Sprintf("Build finished, took %s",
 				time.Since(startTime).Truncate(time.Second).String()))
