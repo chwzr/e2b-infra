@@ -104,6 +104,13 @@ aws s3 "$${S3_OPTS[@]}" sync "s3://${FC_VERSIONS_BUCKET_NAME}/" /fc-versions/
 # Firecracker binaries aren't stored with +x; fix permissions.
 find /fc-versions -name firecracker -type f -exec chmod +x {} +
 
+# Busybox is read from disk at runtime by the orchestrator
+# (HOST_BUSYBOX_DIR/BUSYBOX_VERSION/<arch>/busybox; default /fc-busybox/1.36.1/amd64),
+# no longer embedded in the binary (upstream #2326). Fetch from the e2b public bucket.
+mkdir -p /fc-busybox/1.36.1/amd64
+curl -fsSL "https://storage.googleapis.com/e2b-prod-public-builds/busybox/1.36.1/amd64/busybox" -o /fc-busybox/1.36.1/amd64/busybox
+chmod +x /fc-busybox/1.36.1/amd64/busybox
+
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
 
 # ---
