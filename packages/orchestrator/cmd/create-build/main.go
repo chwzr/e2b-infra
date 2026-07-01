@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -11,10 +13,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -24,6 +29,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
 	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/nbd"
@@ -36,6 +42,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/metrics"
 	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -45,10 +52,21 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-const (
-	baseImage = "e2bdev/base:latest"
-	proxyPort = 5007
-)
+const baseImage = "e2bdev/base:latest"
+
+// proxyPort is the sandbox proxy listen port. It defaults to 5007 but can be
+// overridden via PROXY_PORT so create-build can run alongside a live
+// orchestrator (which already holds the default port).
+func proxyPort() uint16 {
+	if v := os.Getenv("PROXY_PORT"); v != "" {
+		if p, err := strconv.ParseUint(v, 10, 16); err == nil {
+			return uint16(p)
+		}
+		log.Printf("warning: ignoring invalid PROXY_PORT=%q, using default 5007", v)
+	}
+
+	return 5007
+}
 
 func main() {
 	templateID := flag.String("template", "local-template", "template id")
@@ -62,6 +80,8 @@ func main() {
 	memory := flag.Int("memory", 1024, "memory MB")
 	disk := flag.Int("disk", 1024, "disk MB")
 	hugePages := flag.Bool("hugepages", true, "use 2MB huge pages for memory (false = 4KB pages)")
+	disableMemfd := flag.Bool("disable-memfd", false, "disable memfd-backed guest memory")
+	memfileDiffDedup := flag.Bool("memfile-diff-dedup", false, "enable 4KiB-page deduplication of memfile diff against the base template")
 	startCmd := flag.String("start-cmd", "", "start command")
 	setupCmd := flag.String("setup-cmd", "", "setup command to run during build (e.g., install deps)")
 	readyCmd := flag.String("ready-cmd", "", "ready check command")
@@ -69,9 +89,24 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose output")
 	flag.Parse()
 
+	if *disableMemfd {
+		featureflags.OverrideBoolFlag(featureflags.UseMemFdFlag, false)
+	}
+
+	if *memfileDiffDedup {
+		featureflags.OverrideJSONFlag(featureflags.MemfileDiffDedupFlag, ldvalue.FromJSONMarshal(map[string]any{
+			"enabled": true,
+		}))
+	}
+
 	if *toBuild == "" {
 		log.Fatal("-to-build required")
 	}
+
+	// FPH must be installed at boot — flag is read by Create, not Resume.
+	featureflags.NewJSONFlag("free-page-hinting-config", ldvalue.FromJSONMarshal(map[string]any{
+		"enabled": true,
+	}))
 
 	// Suppress other noisy output unless verbose, but keep std log for fatal errors
 	if !*verbose {
@@ -114,7 +149,7 @@ func setupEnv(ctx context.Context, storagePath, sandboxDir, kernel, fc string, l
 
 	if localMode {
 		if os.Geteuid() != 0 {
-			return fmt.Errorf("local mode requires root")
+			return errors.New("local mode requires root")
 		}
 
 		dataDir := storagePath
@@ -161,6 +196,24 @@ func setupEnv(ctx context.Context, storagePath, sandboxDir, kernel, fc string, l
 		}
 		if _, err := os.Stat(envdPath); err == nil {
 			fmt.Printf("✓ Envd: %s\n", envdPath)
+		}
+
+		// HOST_BUSYBOX_DIR: use env if set, otherwise default to local .busybox dir.
+		// Run "make fetch-busybox" in packages/orchestrator to download the binary.
+		busyboxDir := os.Getenv("HOST_BUSYBOX_DIR")
+		if busyboxDir == "" {
+			busyboxDir = abs(".busybox")
+			os.Setenv("HOST_BUSYBOX_DIR", busyboxDir)
+		}
+		busyboxVersion := os.Getenv("BUSYBOX_VERSION")
+		if busyboxVersion == "" {
+			busyboxVersion = cfg.DefaultBusyboxVersion
+		}
+		busyboxBin := filepath.Join(busyboxDir, busyboxVersion, runtime.GOARCH, "busybox")
+		if _, err := os.Stat(busyboxBin); err == nil {
+			fmt.Printf("✓ Busybox: %s\n", busyboxBin)
+		} else {
+			fmt.Printf("⚠ Busybox not found at %s — run 'make fetch-busybox' in packages/orchestrator\n", busyboxBin)
 		}
 
 		fmt.Printf("✓ Storage: %s (local)\n", dataDir)
@@ -230,7 +283,7 @@ func doBuild(
 
 	sandboxes := sandbox.NewSandboxesMap()
 
-	sandboxProxy, err := proxy.NewSandboxProxy(noop.MeterProvider{}, proxyPort, sandboxes, featureFlags)
+	sandboxProxy, err := proxy.NewSandboxProxy(noop.MeterProvider{}, proxyPort(), sandboxes, featureFlags)
 	if err != nil {
 		return fmt.Errorf("proxy: %w", err)
 	}
@@ -299,12 +352,20 @@ func doBuild(
 	defer templateCache.Stop()
 
 	buildMetrics, _ := metrics.NewBuildMetrics(noop.MeterProvider{})
-	sandboxFactory := sandbox.NewFactory(c.BuilderConfig, networkPool, devicePool, featureFlags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), sandboxes)
+	sandboxFactory := sandbox.NewFactory(c.BuilderConfig, networkPool, devicePool, featureFlags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), sandboxes)
+
+	// Layered V4 builds need the upload coordinator so child layers wait on
+	// their parents' header finalization. Redis is nil (CLI is single-host —
+	// no cross-orch signaling needed); local same-orch coordination via
+	// futures is what matters here.
+	uploads := sandbox.NewUploads(templateCache, persistenceTemplate, peerclient.NopResolver(), nil)
+	defer uploads.Stop()
 
 	builder := build.NewBuilder(
 		builderConfig, l, featureFlags, sandboxFactory,
 		persistenceTemplate, persistenceBuild, artifactRegistry,
 		dockerhubRepo, sandboxProxy, sandboxes, templateCache, buildMetrics,
+		uploads,
 	)
 
 	l = l.With(zap.String("envID", templateID)).With(zap.String("buildID", buildID))
@@ -322,6 +383,13 @@ func doBuild(
 		})
 	}
 
+	// Mirror prod gating in pkg/template/server/create_template.go: balloon
+	// is rejected on FC <1.14, so we can't unconditionally request FPR.
+	fcInfo, err := fcversion.New(fc)
+	if err != nil {
+		return fmt.Errorf("invalid firecracker version %q: %w", fc, err)
+	}
+
 	tmpl := config.TemplateConfig{
 		Version:            templates.TemplateV2LatestVersion,
 		TemplateID:         templateID,
@@ -334,6 +402,9 @@ func doBuild(
 		ReadyCmd:           readyCmd,
 		KernelVersion:      kernel,
 		FirecrackerVersion: fc,
+		FreePageReporting:  fcInfo.HasFreePageReporting(),
+		FreePageHinting:    fcInfo.HasFreePageHinting(),
+		TeamID:             "local",
 		Steps:              steps,
 	}
 
@@ -374,7 +445,7 @@ func printArtifactSizes(ctx context.Context, persistence storage.StorageProvider
 		printLocalFileSizes(basePath, buildID)
 	} else {
 		// For remote storage, get sizes from storage provider
-		if memfile, err := persistence.OpenSeekable(ctx, paths.Memfile(), storage.MemfileObjectType); err == nil {
+		if memfile, err := persistence.OpenSeekable(ctx, paths.Memfile()); err == nil {
 			if size, err := memfile.Size(ctx); err == nil {
 				fmt.Printf("   Memfile: %d MB\n", size>>20)
 			}
@@ -415,7 +486,7 @@ func printLocalFileSizes(basePath, buildID string) {
 
 func setupKernel(ctx context.Context, dir, version string) error {
 	arch := utils.TargetArch()
-	dstPath := filepath.Join(dir, version, arch, "vmlinux.bin")
+	dstPath := filepath.Join(dir, version, arch, artifact.KernelFileName)
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir kernel dir: %w", err)
@@ -428,7 +499,7 @@ func setupKernel(ctx context.Context, dir, version string) error {
 	}
 
 	// Try arch-specific URL first: {version}/{arch}/vmlinux.bin
-	archURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/kernels/", version, arch, "vmlinux.bin")
+	archURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/kernels/", version, arch, artifact.KernelFileName)
 	if err != nil {
 		return fmt.Errorf("invalid kernel URL: %w", err)
 	}
@@ -446,7 +517,7 @@ func setupKernel(ctx context.Context, dir, version string) error {
 		return fmt.Errorf("kernel %s not found for %s (no legacy fallback for non-amd64)", version, arch)
 	}
 
-	legacyURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/kernels/", version, "vmlinux.bin")
+	legacyURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/kernels/", version, artifact.KernelFileName)
 	if err != nil {
 		return fmt.Errorf("invalid kernel legacy URL: %w", err)
 	}
@@ -458,7 +529,7 @@ func setupKernel(ctx context.Context, dir, version string) error {
 
 func setupFC(ctx context.Context, dir, version string) error {
 	arch := utils.TargetArch()
-	dstPath := filepath.Join(dir, version, arch, "firecracker")
+	dstPath := filepath.Join(dir, version, arch, artifact.FirecrackerBinaryName)
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir firecracker dir: %w", err)
@@ -471,7 +542,7 @@ func setupFC(ctx context.Context, dir, version string) error {
 	}
 
 	// Download from GCS bucket with {version}/{arch}/firecracker path
-	fcURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/firecrackers/", version, arch, "firecracker")
+	fcURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/firecrackers/", version, arch, artifact.FirecrackerBinaryName)
 	if err != nil {
 		return fmt.Errorf("invalid Firecracker URL: %w", err)
 	}
@@ -489,7 +560,7 @@ func setupFC(ctx context.Context, dir, version string) error {
 		return fmt.Errorf("firecracker %s not found for %s (no legacy fallback for non-amd64)", version, arch)
 	}
 
-	legacyURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/firecrackers/", version, "firecracker")
+	legacyURL, err := url.JoinPath("https://storage.googleapis.com/e2b-prod-public-builds/firecrackers/", version, artifact.FirecrackerBinaryName)
 	if err != nil {
 		return fmt.Errorf("invalid Firecracker legacy URL: %w", err)
 	}

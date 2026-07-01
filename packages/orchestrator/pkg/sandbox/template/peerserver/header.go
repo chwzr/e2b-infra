@@ -1,3 +1,5 @@
+//go:build linux
+
 package peerserver
 
 import (
@@ -35,7 +37,14 @@ func (f *headerSource) Stream(ctx context.Context, sender Sender) error {
 		return ErrNotAvailable
 	}
 
-	data, err := header.Serialize(h.Metadata, h.Mapping)
+	// Rely on the V5 format on the wire.
+	wire := *h
+	meta := *h.Metadata
+	meta.Version = header.MetadataVersionV5
+	wire.Metadata = &meta
+	wire.IncompletePendingUpload = true
+
+	data, err := header.SerializeHeader(&wire)
 	if err != nil {
 		span.RecordError(err)
 

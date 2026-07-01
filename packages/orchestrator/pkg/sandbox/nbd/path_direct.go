@@ -1,3 +1,5 @@
+//go:build linux
+
 package nbd
 
 import (
@@ -124,6 +126,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		d.dispatchers = make([]*Dispatch, 0)
 
 		connections := d.featureFlags.IntFlag(ctx, featureflags.NBDConnectionsPerDevice)
+		asyncWriteZeroes := d.featureFlags.BoolFlag(ctx, featureflags.NBDAsyncWriteZeroesFlag)
 
 		for i := range connections {
 			// Create the socket pairs
@@ -149,7 +152,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			}
 			server.Close()
 
-			dispatch := NewDispatch(serverc, d.Backend)
+			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes)
 			// Capture deviceIndex for the goroutine closure — it's reassigned on
 			// each retry iteration of the outer for-loop (not a range loop, so
 			// Go 1.22+ loop variable fix doesn't apply).
@@ -175,7 +178,9 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		opts = append(opts, nbdnl.WithTimeout(d.ioTimeout))
 		opts = append(opts, nbdnl.WithDeadconnTimeout(d.deadconnTimeout))
 
-		serverFlags := nbdnl.FlagHasFlags | nbdnl.FlagCanMulticonn
+		const flagSendWriteZeroes nbdnl.ServerFlags = 1 << 6 // NBD_FLAG_SEND_WRITE_ZEROES, not in nbdnl
+		serverFlags := nbdnl.FlagHasFlags | nbdnl.FlagCanMulticonn |
+			nbdnl.FlagSendTrim | flagSendWriteZeroes
 
 		idx, connectErr := nbdnl.Connect(deviceIndex, d.socksClient, uint64(size), 0, serverFlags, opts...)
 		if connectErr == nil {
@@ -324,6 +329,10 @@ func disconnectNBDWithTimeout(ctx context.Context, deviceIndex uint32, timeout t
 	}
 
 	return nil
+}
+
+func DisconnectDevice(ctx context.Context, deviceIndex DeviceSlot) error {
+	return disconnectNBDWithTimeout(ctx, deviceIndex, disconnectTimeout)
 }
 
 func closeSocketPairs(socksClient []*os.File, socksServer []io.Closer) error {

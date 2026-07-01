@@ -1,3 +1,5 @@
+//go:build linux
+
 package build
 
 import (
@@ -8,16 +10,27 @@ import (
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/units"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-var fallbackDiffSize = units.MBToBytes(100)
+var (
+	fallbackDiffSize = units.MBToBytes(100)
+
+	meter                   = otel.Meter("github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build")
+	residenceDurationMetric = utils.Must(meter.Int64Histogram("orchestrator.build.cache.residence_duration",
+		metric.WithDescription("How long a diff was kept in the local build cache before eviction"),
+		metric.WithUnit("s")))
+)
 
 type deleteDiff struct {
 	size      int64
@@ -28,6 +41,7 @@ type deleteDiff struct {
 type DiffStore struct {
 	cachePath string
 	cache     *ttlcache.Cache[DiffStoreKey, Diff]
+	initGroup singleflight.Group
 	cancel    func()
 	config    cfg.Config
 	flags     *featureflags.Client
@@ -37,6 +51,8 @@ type DiffStore struct {
 	pdSizes map[DiffStoreKey]*deleteDiff
 	pdMu    sync.RWMutex
 	pdDelay time.Duration
+
+	insertionTimes sync.Map // map[DiffStoreKey]time.Time — tracks when each diff was cached
 }
 
 func NewDiffStore(
@@ -65,7 +81,13 @@ func NewDiffStore(
 	}
 
 	cache.OnEviction(func(ctx context.Context, _ ttlcache.EvictionReason, item *ttlcache.Item[DiffStoreKey, Diff]) {
+		if insertedAt, ok := ds.insertionTimes.LoadAndDelete(item.Key()); ok {
+			duration := time.Since(insertedAt.(time.Time))
+			residenceDurationMetric.Record(ctx, int64(duration.Seconds()))
+		}
+
 		buildData := item.Value()
+
 		// buildData will be deleted by calling buildData.Close()
 		defer ds.resetDelete(item.Key())
 
@@ -96,32 +118,58 @@ func (s *DiffStore) Close() {
 	s.cache.Stop()
 }
 
-func (s *DiffStore) Get(ctx context.Context, diff Diff) (Diff, error) {
-	s.resetDelete(diff.CacheKey())
-	source, found := s.cache.GetOrSet(
-		diff.CacheKey(),
-		diff,
-		ttlcache.WithTTL[DiffStoreKey, Diff](ttlcache.DefaultTTL),
-	)
-
-	value := source.Value()
-	if value == nil {
-		return nil, fmt.Errorf("failed to get source from cache: %s", diff.CacheKey())
+// Get returns the cached Diff for key, refreshing TTL and cancelling any
+// pending eviction. Returns (nil, false) if the key isn't present.
+func (s *DiffStore) Get(key DiffStoreKey) (Diff, bool) {
+	s.resetDelete(key)
+	item := s.cache.Get(key)
+	if item == nil {
+		return nil, false
 	}
 
-	if !found {
-		err := diff.Init(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to init source: %w", err)
+	return item.Value(), true
+}
+
+// GetOrCreate returns the cached Diff for key, or calls create inside a
+// singleflight to construct + cache a new one. The create closure is invoked
+// at most once per key across concurrent callers; on success the returned Diff
+// is cached and its insertion time recorded.
+func (s *DiffStore) GetOrCreate(ctx context.Context, key DiffStoreKey, create func(context.Context) (Diff, error)) (Diff, error) {
+	s.resetDelete(key)
+
+	if item := s.cache.Get(key); item != nil {
+		return item.Value(), nil
+	}
+
+	v, err, _ := s.initGroup.Do(string(key), func() (any, error) {
+		// Double-check: another goroutine may have cached it while we waited.
+		if item := s.cache.Get(key); item != nil {
+			return item.Value(), nil
 		}
+
+		insertTime := time.Now()
+
+		diff, err := create(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		s.cache.Set(key, diff, ttlcache.DefaultTTL)
+		s.insertionTimes.Store(diff.CacheKey(), insertTime)
+
+		return diff, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create diff: %w", err)
 	}
 
-	return value, nil
+	return v.(Diff), nil
 }
 
 func (s *DiffStore) Add(d Diff) {
 	s.resetDelete(d.CacheKey())
 	s.cache.Set(d.CacheKey(), d, ttlcache.DefaultTTL)
+	s.insertionTimes.LoadOrStore(d.CacheKey(), time.Now())
 }
 
 func (s *DiffStore) Has(d Diff) bool {
@@ -236,7 +284,7 @@ func (s *DiffStore) deleteOldestFromCache(ctx context.Context) (suc bool, e erro
 			return true
 		}
 
-		sfSize, err := item.Value().FileSize()
+		sfSize, err := item.Value().FileSize(ctx)
 		if err != nil {
 			logger.L().Warn(ctx, "failed to get size of deleted item from cache", zap.Error(err))
 			sfSize = fallbackDiffSize

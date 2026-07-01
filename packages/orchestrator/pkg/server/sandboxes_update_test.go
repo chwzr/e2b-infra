@@ -1,7 +1,8 @@
+//go:build linux
+
 package server
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestUpdate_EgressOnly_FailsAndDoesNotChangeEndTime(t *testing.T) {
 	originalEnd := sbx.GetEndAt()
 
 	sandboxMap := sandbox.NewSandboxesMap()
-	sandboxMap.Insert(context.Background(), sbx)
+	sandboxMap.AssignNetwork(t.Context(), sbx)
 	sandboxMap.MarkRunning(t.Context(), sbx)
 
 	s := &Server{
@@ -79,7 +80,7 @@ func TestUpdate_EndTimeAndEgress_EgressFails_RevertsEndTime(t *testing.T) {
 	originalEnd := sbx.GetEndAt()
 
 	sandboxMap := sandbox.NewSandboxesMap()
-	sandboxMap.Insert(context.Background(), sbx)
+	sandboxMap.AssignNetwork(t.Context(), sbx)
 	sandboxMap.MarkRunning(t.Context(), sbx)
 
 	s := &Server{
