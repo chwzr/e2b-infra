@@ -60,7 +60,7 @@ switch:
 		-backend-config="region=$(S3_REGION)" \
 		-backend-config="access_key=$(S3_ACCESS_KEY)" \
 		-backend-config="secret_key=$(S3_SECRET_KEY)" \
-		-backend-config="endpoints={s3=\"https://$(S3_ENDPOINT)\"}"
+		-backend-config="endpoint=https://$(S3_ENDPOINT)"
 
 .PHONY: init
 init:
@@ -69,7 +69,7 @@ init:
 		-backend-config="region=$(S3_REGION)" \
 		-backend-config="access_key=$(S3_ACCESS_KEY)" \
 		-backend-config="secret_key=$(S3_SECRET_KEY)" \
-		-backend-config="endpoints={s3=\"https://$(S3_ENDPOINT)\"}"
+		-backend-config="endpoint=https://$(S3_ENDPOINT)"
 	$(tf_vars) $(TF) apply $(TF_VAR_FILE_ARG) -target=module.init -input=false -compact-warnings
 
 .PHONY: plan

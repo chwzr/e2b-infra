@@ -15,9 +15,8 @@ of the ingress are **your** responsibility — Terraform manages none of them.
 
 **Tools** (on the machine you run Terraform from)
 
-- [Terraform](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) (v1.5.x)
-  - We ask for v1.5.x because starting from v1.6 Terraform [switched](https://github.com/hashicorp/terraform/commit/b145fbcaadf0fa7d0e7040eac641d9aef2a26433) their license from Mozilla Public License to Business Source License.
-  - The last MPL version is **v1.5.7** — binaries [here](https://developer.hashicorp.com/terraform/install/versions#binary-downloads), or via [tfenv](https://github.com/tfutils/tfenv) (`tfenv install 1.5.7 && tfenv use 1.5.7`).
+- [Terraform](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) — **v1.5.7 or newer**. The S3 state backend is configured with the version-portable `endpoint` argument, so everything from 1.5.7 through current releases works (verified on 1.5.7 and 1.14.x).
+  - If you want to stay on the Mozilla Public License (Terraform [switched](https://github.com/hashicorp/terraform/commit/b145fbcaadf0fa7d0e7040eac641d9aef2a26433) to the Business Source License from v1.6), **v1.5.7** is the last MPL release and is fully supported — binaries [here](https://developer.hashicorp.com/terraform/install/versions#binary-downloads), or via [tfenv](https://github.com/tfutils/tfenv) (`tfenv install 1.5.7 && tfenv use 1.5.7`).
 - [Golang](https://go.dev/doc/install)
 - [Docker](https://docs.docker.com/engine/install/) with Buildx
 - [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm)
