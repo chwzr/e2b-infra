@@ -66,15 +66,16 @@ module "redis" {
 module "ingress" {
   source = "../../modules/job-ingress"
 
-  ingress_count        = var.ingress_count
-  ingress_proxy_port   = var.ingress_port
-  acme_email           = var.acme_email
-  domain_name          = var.domain_name
-  ingress_image        = var.ingress_image
-  hcloud_token         = var.hcloud_token
-  hcloud_zone          = var.hcloud_zone
-  hcloud_zone_id       = var.hcloud_zone_id
-  traefik_config_files = var.traefik_config_files
+  ingress_count          = var.ingress_count
+  ingress_proxy_port     = var.ingress_port
+  ingress_proxy_tls_port = var.ingress_tls_port
+  acme_email             = var.acme_email
+  domain_name            = var.domain_name
+  ingress_image          = var.ingress_image
+  hcloud_token           = var.hcloud_token
+  hcloud_zone            = var.hcloud_zone
+  hcloud_zone_id         = var.hcloud_zone_id
+  traefik_config_files   = var.traefik_config_files
 
   node_pool     = var.ingress_node_pool
   update_stanza = false
@@ -152,6 +153,35 @@ module "api" {
     VOLUME_TOKEN_SIGNING_KEY_NAME = "e2b-volume-token-key"
     VOLUME_TOKEN_DURATION         = "1h"
     VOLUME_TOKEN_SIGNING_METHOD   = "HS256"
+  }
+}
+
+# ---
+# Dashboard API (serves dashboard-api.<domain>: team/user management, Supabase-token auth)
+# ---
+
+module "dashboard_api" {
+  source = "../../modules/job-dashboard-api"
+
+  count_instances = var.api_cluster_size
+  node_pool       = var.api_node_pool
+  update_stanza   = var.api_cluster_size > 1
+  environment     = var.environment
+
+  image = "${var.container_registry_url}/${var.prefix}core/dashboard-api:latest"
+
+  postgres_connection_string   = var.postgres_connection_string
+  auth_db_connection_string    = var.postgres_connection_string
+  clickhouse_connection_string = local.clickhouse_connection_string
+  supabase_jwt_secrets         = var.supabase_jwt_secrets
+  redis_url                    = var.redis_url
+  redis_cluster_url            = var.redis_cluster_url
+  redis_tls_ca_base64          = var.redis_tls_ca_base64
+
+  otel_collector_grpc_port = var.otel_collector_grpc_port
+  logs_proxy_port = {
+    name = "logs"
+    port = var.logs_proxy_port
   }
 }
 

@@ -6,7 +6,7 @@ CLICKHOUSE_HOST ?= clickhouse
 
 ifeq ($(PROVIDER),aws)
 	CLICKHOUSE_MIGRATOR_IMAGE ?= $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(PREFIX)core/clickhouse-migrator
-else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
 	CLICKHOUSE_MIGRATOR_IMAGE ?= $(CONTAINER_REGISTRY_URL)/$(PREFIX)core/clickhouse-migrator
 else
 	CLICKHOUSE_MIGRATOR_IMAGE ?= $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/$(PREFIX)core/clickhouse-migrator

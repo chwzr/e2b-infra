@@ -51,6 +51,7 @@ resource "null_resource" "bootstrap" {
       CONSUL_GOSSIP_ENCRYPTION_KEY = var.consul_gossip_encryption_key
       CONSUL_DNS_REQUEST_TOKEN     = var.consul_dns_request_token
       CONTAINER_REGISTRY_URL       = var.container_registry_url
+      REGISTRY_AUTH                = var.registry_auth
       DATACENTER                   = var.datacenter
     })
     destination = "/tmp/start-ingress.sh"

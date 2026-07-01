@@ -5,7 +5,7 @@ PREFIX := $(strip $(subst ",,$(PREFIX)))
 
 ifeq ($(PROVIDER),aws)
 	REGISTRY_PREFIX := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(PREFIX)core
-else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
 	REGISTRY_PREFIX := $(CONTAINER_REGISTRY_URL)/$(PREFIX)core
 else
 	REGISTRY_PREFIX := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/$(PREFIX)core

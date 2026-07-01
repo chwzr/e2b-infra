@@ -15,7 +15,7 @@ BUILD_PLATFORM ?= linux/$(BUILD_ARCH)
 
 ifeq ($(PROVIDER),aws)
 	IMAGE_REGISTRY := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(PREFIX)core/client-proxy
-else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
 	IMAGE_REGISTRY := $(CONTAINER_REGISTRY_URL)/$(PREFIX)core/client-proxy
 else
 	IMAGE_REGISTRY := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/$(PREFIX)core/client-proxy

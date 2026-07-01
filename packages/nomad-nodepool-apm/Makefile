@@ -27,7 +27,7 @@ upload:
 	chmod +x $(BINARY)
 ifeq ($(PROVIDER),aws)
 	aws s3 cp $(BINARY) "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/nomad-nodepool-apm" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
-else ifneq (,$(filter $(PROVIDER),proxmox hetzner))
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
 	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) \
 		aws s3 cp $(BINARY) "s3://$(S3_BUCKET_PREFIX)fc-env-pipeline/nomad-nodepool-apm" --endpoint-url "https://$(S3_ENDPOINT)" --cache-control "no-cache, max-age=0"
 else

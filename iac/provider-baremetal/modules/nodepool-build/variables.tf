@@ -106,3 +106,9 @@ variable "fc_kernels_bucket_name" {
 variable "fc_versions_bucket_name" {
   type = string
 }
+
+variable "registry_auth" {
+  type        = string
+  default     = ""
+  description = "base64(username:password) for the container registry; written into /root/docker/config.json"
+}

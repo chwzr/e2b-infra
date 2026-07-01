@@ -26,7 +26,7 @@ mkdir -p /root/docker
 cat > /root/docker/config.json <<EOF
 {
     "auths": {
-        "${CONTAINER_REGISTRY_URL}": {}
+        "${CONTAINER_REGISTRY_URL}": { "auth": "${REGISTRY_AUTH}" }
     }
 }
 EOF

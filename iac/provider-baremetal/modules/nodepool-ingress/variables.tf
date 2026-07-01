@@ -66,3 +66,9 @@ variable "container_registry_url" {
   type    = string
   default = ""
 }
+
+variable "registry_auth" {
+  type        = string
+  default     = ""
+  description = "base64(username:password) for the container registry; written into /root/docker/config.json"
+}

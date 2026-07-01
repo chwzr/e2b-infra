@@ -36,7 +36,7 @@ mkdir -p /root/docker
 cat > /root/docker/config.json <<EOF
 {
     "auths": {
-        "${CONTAINER_REGISTRY_URL}": {}
+        "${CONTAINER_REGISTRY_URL}": { "auth": "${REGISTRY_AUTH}" }
     }
 }
 EOF
@@ -110,6 +110,17 @@ EOF
 systemctl daemon-reload
 systemctl enable consul.service
 systemctl restart consul.service
+
+# ---
+# CNI plugins — required for the clickhouse job's Nomad bridge networking
+# (mode = "bridge"). Must be installed before Nomad starts so it fingerprints
+# bridge support; otherwise the job fails placement with "missing network".
+# ---
+ARCH_CNI=$([ "$(uname -m)" = aarch64 ] && echo arm64 || echo amd64)
+CNI_PLUGIN_VERSION=v1.6.2
+curl -L -o /tmp/cni-plugins.tgz "https://github.com/containernetworking/plugins/releases/download/$${CNI_PLUGIN_VERSION}/cni-plugins-linux-$${ARCH_CNI}-$${CNI_PLUGIN_VERSION}.tgz" &&
+  mkdir -p /opt/cni/bin &&
+  tar -C /opt/cni/bin -xzf /tmp/cni-plugins.tgz
 
 # ---
 # Nomad Client (job_constraint for volume pinning)

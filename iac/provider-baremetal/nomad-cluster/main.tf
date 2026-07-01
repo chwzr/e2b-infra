@@ -51,6 +51,7 @@ module "api" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+  registry_auth                = var.registry_auth
 
   depends_on = [module.control_server]
 }
@@ -78,6 +79,7 @@ module "ingress" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+  registry_auth                = var.registry_auth
 
   depends_on = [module.control_server]
 }
@@ -105,6 +107,7 @@ module "orchestrator" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+  registry_auth                = var.registry_auth
 
   s3_endpoint                 = var.s3_endpoint
   s3_access_key               = var.s3_access_key
@@ -140,6 +143,7 @@ module "build" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+  registry_auth                = var.registry_auth
 
   s3_endpoint                 = var.s3_endpoint
   s3_access_key               = var.s3_access_key
@@ -176,6 +180,7 @@ module "clickhouse" {
   consul_gossip_encryption_key = var.consul_gossip_encryption_key
   consul_dns_request_token     = var.consul_dns_request_token
   container_registry_url       = var.container_registry_url
+  registry_auth                = var.registry_auth
 
   depends_on = [module.control_server]
 }

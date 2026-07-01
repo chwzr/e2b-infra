@@ -101,6 +101,10 @@ variable "ingress_port" {
   type = number
 }
 
+variable "ingress_tls_port" {
+  type = number
+}
+
 variable "ingress_count" {
   type = number
 }

@@ -53,9 +53,14 @@ provider "nomad" {
 }
 
 locals {
-  redis_port   = 6379
-  ingress_port = 8080
-  nomad_port   = 4646
+  redis_port       = 6379
+  ingress_port     = 80
+  ingress_tls_port = 443
+  nomad_port       = 4646
+
+  # base64(username:password) for the private container registry, written into
+  # /root/docker/config.json on each node so Nomad's docker driver can pull.
+  registry_auth = var.registry_username != "" ? base64encode("${var.registry_username}:${var.registry_password}") : ""
 
   api_pool_name        = "api"
   ingress_pool_name    = "ingress"
@@ -123,6 +128,7 @@ module "cluster" {
   consul_dns_request_token     = module.init.cluster.consul_dns_request_token
 
   container_registry_url = var.container_registry_url
+  registry_auth          = local.registry_auth
 
   s3_endpoint                 = var.s3_endpoint
   s3_access_key               = var.s3_access_key
@@ -160,6 +166,7 @@ module "nomad" {
 
   ingress_node_pool = local.ingress_pool_name
   ingress_port      = local.ingress_port
+  ingress_tls_port  = local.ingress_tls_port
   ingress_count     = 1
 
   client_proxy_count = var.client_proxy_count

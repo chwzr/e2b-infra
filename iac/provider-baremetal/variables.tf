@@ -181,6 +181,19 @@ variable "container_registry_url" {
   default     = ""
 }
 
+variable "registry_username" {
+  type        = string
+  description = "Username for the container registry (private images). Leave empty for an anonymous/public registry."
+  default     = ""
+}
+
+variable "registry_password" {
+  type        = string
+  sensitive   = true
+  description = "Password/token for the container registry. Combined with registry_username into a base64 docker auth on each node."
+  default     = ""
+}
+
 // ---
 // Application Secrets
 // ---

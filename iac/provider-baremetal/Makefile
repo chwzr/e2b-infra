@@ -20,6 +20,8 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, PREFIX) \
 	$(call tfvar, DOMAIN_NAME) \
 	$(call tfvar, CONTAINER_REGISTRY_URL) \
+	$(call tfvar, REGISTRY_USERNAME) \
+	$(call tfvar, REGISTRY_PASSWORD) \
 	$(call tfvar, S3_ENDPOINT) \
 	$(call tfvar, S3_ACCESS_KEY) \
 	$(call tfvar, S3_SECRET_KEY) \
