@@ -109,6 +109,9 @@ job "api" {
       }
 
       env {
+        # Align FC version with the (updated) orchestrator so template snapshots
+        # built at v1.14.1 can be resumed (old API default was v1.12.1).
+        DEFAULT_FIRECRACKER_VERSION    = "v1.14.1_431f1fc"
         ENVIRONMENT                    = "${environment}"
         DOMAIN_NAME                    = "${domain_name}"
         NODE_ID                        = "$${node.unique.id}"

@@ -61,6 +61,7 @@ job "orchestrator-${latest_orchestrator_job_id}" {
       }
 
       env {
+        DEFAULT_FIRECRACKER_VERSION = "v1.14.1_431f1fc"
         NODE_ID     = "$${node.unique.name}"
         NODE_IP     = "$${attr.unique.network.ip-address}"
         NODE_LABELS = "$${meta.node_labels}"
