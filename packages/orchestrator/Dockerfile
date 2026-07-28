@@ -1,15 +1,14 @@
-ARG GOLANG_VERSION=1.25.4
+ARG GOLANG_VERSION=1.26.3
 
-# It has to match with the host OS version (Ubuntu 22.04 = bookworm)
+# The orchestrator binary is built with CGO and dynamically links against
+# glibc, so the build image's glibc must be <= the host's glibc (forward
+# compatibility only). The host runs Ubuntu 24.04 (glibc 2.39), so bookworm
+# (glibc 2.36) is safe; do NOT bump to trixie (glibc 2.41) without also
+# upgrading the host, or the binary will fail to start with
+# "GLIBC_2.4x not found" errors.
 ARG DEBIAN_VERSION=bookworm
 
-# Busybox version from fc-busybox GitHub release.
-# Passed via --build-arg from Makefile (single source of truth).
-# TARGETARCH is set automatically by Docker --platform.
-ARG BUSYBOX_VERSION
-
 FROM golang:${GOLANG_VERSION}-${DEBIAN_VERSION} AS builder
-ARG BUSYBOX_VERSION
 ARG TARGETARCH
 
 # Cached golang dependencies
@@ -31,15 +30,10 @@ WORKDIR /build
 COPY ./shared/pkg ./shared/pkg
 COPY ./clickhouse/pkg ./clickhouse/pkg
 
-COPY ./orchestrator/scripts ./orchestrator/scripts
 COPY ./orchestrator/pkg ./orchestrator/pkg
 COPY ./orchestrator/cmd ./orchestrator/cmd
 COPY ./orchestrator/main.go ./orchestrator/main.go
 COPY ./orchestrator/Makefile ./orchestrator/Makefile
-
-# Download busybox and verify SHA256 against published checksums.
-RUN ./orchestrator/scripts/fetch-busybox.sh "${BUSYBOX_VERSION}" "${TARGETARCH}" \
-    ./orchestrator/pkg/template/build/core/systeminit/busybox
 
 WORKDIR /build/orchestrator
 

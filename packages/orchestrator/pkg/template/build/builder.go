@@ -1,3 +1,5 @@
+//go:build linux
+
 package build
 
 import (
@@ -8,6 +10,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -35,6 +39,7 @@ import (
 	artifactsregistry "github.com/e2b-dev/infra/packages/shared/pkg/artifacts-registry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/dockerhub"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -61,6 +66,7 @@ type Builder struct {
 	templateCache       *sbxtemplate.Cache
 	metrics             *metrics.BuildMetrics
 	featureFlags        *featureflags.Client
+	uploads             *sandbox.Uploads
 }
 
 func NewBuilder(
@@ -76,6 +82,7 @@ func NewBuilder(
 	sandboxes *sandbox.Map,
 	templateCache *sbxtemplate.Cache,
 	buildMetrics *metrics.BuildMetrics,
+	uploads *sandbox.Uploads,
 ) *Builder {
 	return &Builder{
 		config:              config,
@@ -90,12 +97,16 @@ func NewBuilder(
 		sandboxes:           sandboxes,
 		templateCache:       templateCache,
 		metrics:             buildMetrics,
+		uploads:             uploads,
 	}
 }
 
 type Result struct {
-	EnvdVersion  string
-	RootfsSizeMB int64
+	EnvdVersion        string
+	KernelVersion      string
+	FirecrackerVersion string
+	RootfsSizeMB       int64
+	SchedulingMetadata *orchestratorgrpc.SchedulingMetadata
 }
 
 // Build builds the template, uploads it to storage and returns the result metadata.
@@ -157,6 +168,16 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 		switch {
 		case e != nil:
 			l.Error(ctx, fmt.Sprintf("Build failed: %v", builderrors.UnwrapUserError(e).GetMessage()))
+			// Internal (non-user) errors are surfaced to the user only as a generic
+			// placeholder (InternalErrorMessage), which hides the real cause from
+			// operator logs. Report the full underlying error to telemetry and the
+			// orchestrator logs so build failures stay debuggable server-side.
+			if !builderrors.IsUserError(e) {
+				telemetry.ReportCriticalError(ctx, "internal template build error", e,
+					telemetry.WithTemplateID(cfg.TemplateID),
+					telemetry.WithBuildID(paths.BuildID),
+				)
+			}
 		default:
 			l.Info(ctx, fmt.Sprintf("Build finished, took %s",
 				time.Since(startTime).Truncate(time.Second).String()))
@@ -173,9 +194,21 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 	// Wrap context as a user error if no user error already exists
 	defer func() {
 		if ctx.Err() != nil {
+			childSpan.AddEvent("build context done", trace.WithAttributes(
+				attribute.String("context.err", ctx.Err().Error()),
+			))
 			e = errors.Join(e, ctx.Err())
 		}
+
 		e = builderrors.WrapContextAsUserError(e)
+		if e != nil {
+			childSpan.RecordError(e, trace.WithAttributes(
+				telemetry.WithTemplateID(cfg.TemplateID),
+				telemetry.WithBuildID(paths.BuildID),
+				telemetry.WithTeamID(cfg.TeamID),
+			))
+			childSpan.SetStatus(codes.Error, e.Error())
+		}
 	}()
 
 	if isV1Build {
@@ -206,9 +239,30 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 	uploadErrGroup := &errgroup.Group{}
 	defer func() {
 		// Wait for all template layers to be uploaded even if the build fails
+		_, waitSpan := tracer.Start(ctx, "wait-for-template-layer-uploads", trace.WithAttributes(
+			telemetry.WithTemplateID(cfg.TemplateID),
+			telemetry.WithBuildID(paths.BuildID),
+			telemetry.WithTeamID(cfg.TeamID),
+		))
+		defer waitSpan.End()
+
 		err := uploadErrGroup.Wait()
 		if err != nil {
+			waitSpan.RecordError(err)
+			waitSpan.SetStatus(codes.Error, err.Error())
+			b.logger.Error(ctx, "template layer upload wait failed",
+				logger.WithTemplateID(cfg.TemplateID),
+				logger.WithBuildID(paths.BuildID),
+				logger.WithTeamID(cfg.TeamID),
+				zap.Error(err),
+			)
 			e = errors.Join(e, fmt.Errorf("error uploading template layers: %w", err))
+		}
+
+		if ctx.Err() != nil {
+			waitSpan.AddEvent("build context done while waiting for uploads", trace.WithAttributes(
+				attribute.String("context.err", ctx.Err().Error()),
+			))
 		}
 	}()
 
@@ -257,8 +311,6 @@ func runBuild(
 
 	index := cache.NewHashIndex(bc.CacheScope, builder.buildStorage, templateStorage)
 
-	uploadTracker := layer.NewUploadTracker()
-
 	layerExecutor := layer.NewLayerExecutor(
 		bc,
 		builder.logger,
@@ -268,7 +320,9 @@ func runBuild(
 		templateStorage,
 		builder.buildStorage,
 		index,
-		uploadTracker,
+		builder.uploads,
+		builder.config.StorageConfig.CompressConfig,
+		builder.featureFlags,
 	)
 
 	baseBuilder := base.New(
@@ -376,9 +430,29 @@ func runBuild(
 	logger.L().Info(ctx, "rootfs size", zap.Uint64("size", rootfsSize))
 
 	return &Result{
-		EnvdVersion:  bc.EnvdVersion,
-		RootfsSizeMB: units.BytesToMB(int64(rootfsSize)),
+		EnvdVersion:        bc.EnvdVersion,
+		KernelVersion:      bc.Config.KernelVersion,
+		FirecrackerVersion: bc.Config.FirecrackerVersion,
+		RootfsSizeMB:       units.BytesToMB(int64(rootfsSize)),
+		SchedulingMetadata: templateSchedulingMetadata(ctx, builder.templateCache, lastLayerResult.Metadata.Template.BuildID),
 	}, nil
+}
+
+func templateSchedulingMetadata(ctx context.Context, cache *sbxtemplate.Cache, buildID string) *orchestratorgrpc.SchedulingMetadata {
+	// Use GetTemplate (not GetCachedTemplate): the optimize phase invalidates
+	// the final build from the cache, so re-fetch to resolve its headers.
+	t, err := cache.GetTemplate(ctx, buildID, false, false)
+	if err != nil {
+		return nil
+	}
+	provider, ok := t.(interface {
+		SchedulingMetadata(ctx context.Context) *orchestratorgrpc.SchedulingMetadata
+	})
+	if !ok {
+		return nil
+	}
+
+	return provider.SchedulingMetadata(ctx)
 }
 
 // forceSteps sets force for all steps after the first encounter.
@@ -406,7 +480,7 @@ func getRootfsSize(
 	s storage.StorageProvider,
 	paths storage.Paths,
 ) (uint64, error) {
-	obj, err := s.OpenBlob(ctx, paths.RootfsHeader(), storage.RootFSHeaderObjectType)
+	obj, err := s.OpenBlob(ctx, paths.RootfsHeader())
 	if err != nil {
 		return 0, fmt.Errorf("error opening rootfs header object: %w", err)
 	}

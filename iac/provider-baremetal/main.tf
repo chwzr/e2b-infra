@@ -74,6 +74,13 @@ locals {
   # ssh_private_key may be supplied as PEM content OR a path to a PEM file.
   # Paths are preferred because Make's -include can't parse multi-line values.
   ssh_private_key = fileexists(var.ssh_private_key) ? file(var.ssh_private_key) : var.ssh_private_key
+
+  # Runtime object storage for the app buckets, decoupled from the TF-state S3.
+  # Falls back to the state S3 config when app_s3_* is unset (backward compatible).
+  app_s3_endpoint   = var.app_s3_endpoint != "" ? var.app_s3_endpoint : var.s3_endpoint
+  app_s3_access_key = var.app_s3_access_key != "" ? var.app_s3_access_key : var.s3_access_key
+  app_s3_secret_key = var.app_s3_secret_key != "" ? var.app_s3_secret_key : var.s3_secret_key
+  app_s3_region     = var.app_s3_region != "" ? var.app_s3_region : var.s3_region
 }
 
 module "init" {
@@ -130,10 +137,10 @@ module "cluster" {
   container_registry_url = var.container_registry_url
   registry_auth          = local.registry_auth
 
-  s3_endpoint                 = var.s3_endpoint
-  s3_access_key               = var.s3_access_key
-  s3_secret_key               = var.s3_secret_key
-  s3_region                   = var.s3_region
+  s3_endpoint                 = local.app_s3_endpoint
+  s3_access_key               = local.app_s3_access_key
+  s3_secret_key               = local.app_s3_secret_key
+  s3_region                   = local.app_s3_region
   fc_env_pipeline_bucket_name = module.init.fc_env_pipeline_bucket_name
   fc_kernels_bucket_name      = module.init.fc_kernels_bucket_name
   fc_versions_bucket_name     = module.init.fc_versions_bucket_name
@@ -147,10 +154,10 @@ module "nomad" {
   environment = var.environment
 
   container_registry_url = var.container_registry_url
-  s3_endpoint            = var.s3_endpoint
-  s3_region              = var.s3_region
-  s3_access_key          = var.s3_access_key
-  s3_secret_key          = var.s3_secret_key
+  s3_endpoint            = local.app_s3_endpoint
+  s3_region              = local.app_s3_region
+  s3_access_key          = local.app_s3_access_key
+  s3_secret_key          = local.app_s3_secret_key
   acme_email             = var.acme_email
   ingress_image          = var.ingress_image
   hcloud_token           = var.hcloud_token

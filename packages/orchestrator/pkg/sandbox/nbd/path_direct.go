@@ -1,3 +1,5 @@
+//go:build linux
+
 package nbd
 
 import (
@@ -24,7 +26,15 @@ import (
 )
 
 const (
-	connectTimeout = 30 * time.Second
+	// ioTimeout is the per-request timeout for the kernel NBD driver.
+	// Must be greater than the backend fetch timeout (60s in streaming_chunk.go)
+	// so the dispatch handler has time to respond before the kernel declares
+	// the connection dead and returns EIO to the guest.
+	ioTimeout = 90 * time.Second
+
+	// deadconnTimeout is how long the kernel waits after an I/O timeout
+	// before declaring the NBD connection dead.
+	deadconnTimeout = 30 * time.Second
 
 	// disconnectTimeout should not be necessary if the disconnect is reliable
 	disconnectTimeout = 30 * time.Second
@@ -37,9 +47,11 @@ type DirectPathMount struct {
 	devicePool   *DevicePool
 	featureFlags *featureflags.Client
 
-	Backend     block.Device
-	deviceIndex uint32
-	blockSize   uint64
+	Backend         block.Device
+	deviceIndex     uint32
+	blockSize       uint64
+	ioTimeout       time.Duration
+	deadconnTimeout time.Duration
 
 	dispatchers []*Dispatch
 	socksClient []*os.File
@@ -48,16 +60,37 @@ type DirectPathMount struct {
 	handlersWg sync.WaitGroup
 }
 
-func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client) *DirectPathMount {
-	return &DirectPathMount{
-		Backend:      b,
-		blockSize:    4096,
-		devicePool:   devicePool,
-		featureFlags: featureFlags,
-		socksClient:  make([]*os.File, 0),
-		socksServer:  make([]io.Closer, 0),
-		deviceIndex:  math.MaxUint32,
+// MountOption configures a DirectPathMount.
+type MountOption func(*DirectPathMount)
+
+// WithIOTimeout overrides the kernel NBD I/O timeout (default 90s).
+func WithIOTimeout(d time.Duration) MountOption {
+	return func(m *DirectPathMount) { m.ioTimeout = d }
+}
+
+// WithDeadconnTimeout overrides the kernel NBD dead-connection timeout (default 30s).
+func WithDeadconnTimeout(d time.Duration) MountOption {
+	return func(m *DirectPathMount) { m.deadconnTimeout = d }
+}
+
+func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, opts ...MountOption) *DirectPathMount {
+	m := &DirectPathMount{
+		Backend:         b,
+		blockSize:       4096,
+		devicePool:      devicePool,
+		featureFlags:    featureFlags,
+		socksClient:     make([]*os.File, 0),
+		socksServer:     make([]io.Closer, 0),
+		deviceIndex:     math.MaxUint32,
+		ioTimeout:       ioTimeout,
+		deadconnTimeout: deadconnTimeout,
 	}
+
+	for _, o := range opts {
+		o(m)
+	}
+
+	return m
 }
 
 func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err error) {
@@ -93,6 +126,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		d.dispatchers = make([]*Dispatch, 0)
 
 		connections := d.featureFlags.IntFlag(ctx, featureflags.NBDConnectionsPerDevice)
+		asyncWriteZeroes := d.featureFlags.BoolFlag(ctx, featureflags.NBDAsyncWriteZeroesFlag)
 
 		for i := range connections {
 			// Create the socket pairs
@@ -118,7 +152,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			}
 			server.Close()
 
-			dispatch := NewDispatch(serverc, d.Backend)
+			dispatch := NewDispatch(serverc, d.Backend, asyncWriteZeroes)
 			// Capture deviceIndex for the goroutine closure — it's reassigned on
 			// each retry iteration of the outer for-loop (not a range loop, so
 			// Go 1.22+ loop variable fix doesn't apply).
@@ -141,10 +175,12 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		var opts []nbdnl.ConnectOption
 		opts = append(opts, nbdnl.WithBlockSize(d.blockSize))
-		opts = append(opts, nbdnl.WithTimeout(connectTimeout))
-		opts = append(opts, nbdnl.WithDeadconnTimeout(connectTimeout))
+		opts = append(opts, nbdnl.WithTimeout(d.ioTimeout))
+		opts = append(opts, nbdnl.WithDeadconnTimeout(d.deadconnTimeout))
 
-		serverFlags := nbdnl.FlagHasFlags | nbdnl.FlagCanMulticonn
+		const flagSendWriteZeroes nbdnl.ServerFlags = 1 << 6 // NBD_FLAG_SEND_WRITE_ZEROES, not in nbdnl
+		serverFlags := nbdnl.FlagHasFlags | nbdnl.FlagCanMulticonn |
+			nbdnl.FlagSendTrim | flagSendWriteZeroes
 
 		idx, connectErr := nbdnl.Connect(deviceIndex, d.socksClient, uint64(size), 0, serverFlags, opts...)
 		if connectErr == nil {
@@ -293,6 +329,10 @@ func disconnectNBDWithTimeout(ctx context.Context, deviceIndex uint32, timeout t
 	}
 
 	return nil
+}
+
+func DisconnectDevice(ctx context.Context, deviceIndex DeviceSlot) error {
+	return disconnectNBDWithTimeout(ctx, deviceIndex, disconnectTimeout)
 }
 
 func closeSocketPairs(socksClient []*os.File, socksServer []io.Closer) error {

@@ -93,6 +93,7 @@ job "template-manager" {
       }
 
       env {
+        DEFAULT_FIRECRACKER_VERSION = "v1.14.1_431f1fc"
         NODE_ID     = "$${node.unique.name}"
         NODE_LABELS = "$${meta.node_labels}"
 

@@ -2,17 +2,19 @@ package storage
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"math/rand"
 	"net/http"
 	"os"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -138,10 +140,62 @@ type MultipartUploader struct {
 	token       string
 	client      *retryablehttp.Client
 	retryConfig RetryConfig
+	metadata    ObjectMetadata
 	baseURL     string // Allow overriding for testing
+
+	// Fields for partUploader interface
+	uploadID string
+	mu       sync.Mutex
+	parts    []Part
 }
 
-func NewMultipartUploaderWithRetryConfig(ctx context.Context, bucketName, objectName string, retryConfig RetryConfig) (*MultipartUploader, error) {
+var _ partUploader = (*MultipartUploader)(nil)
+
+// Start initiates the GCS multipart upload.
+func (m *MultipartUploader) Start(ctx context.Context) error {
+	uploadID, err := m.initiateUpload(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initiate multipart upload: %w", err)
+	}
+
+	m.uploadID = uploadID
+
+	return nil
+}
+
+// UploadPart uploads a single part to GCS. Multiple data slices are hashed
+// and uploaded without copying into a single contiguous buffer.
+func (m *MultipartUploader) UploadPart(ctx context.Context, partIndex int, data ...[]byte) error {
+	etag, err := m.uploadPartSlices(ctx, m.uploadID, partIndex, data)
+	if err != nil {
+		return fmt.Errorf("failed to upload part %d: %w", partIndex, err)
+	}
+
+	m.mu.Lock()
+	m.parts = append(m.parts, Part{
+		PartNumber: partIndex,
+		ETag:       etag,
+	})
+	m.mu.Unlock()
+
+	return nil
+}
+
+// Complete finalizes the GCS multipart upload with all collected parts.
+func (m *MultipartUploader) Complete(ctx context.Context) error {
+	m.mu.Lock()
+	parts := make([]Part, len(m.parts))
+	copy(parts, m.parts)
+	m.mu.Unlock()
+
+	return m.completeUpload(ctx, m.uploadID, parts)
+}
+
+func (m *MultipartUploader) Close() error {
+	return nil
+}
+
+func NewMultipartUploaderWithRetryConfig(ctx context.Context, bucketName, objectName string, retryConfig RetryConfig, metadata ObjectMetadata) (*MultipartUploader, error) {
 	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get credentials: %w", err)
@@ -158,6 +212,7 @@ func NewMultipartUploaderWithRetryConfig(ctx context.Context, bucketName, object
 		token:       token.AccessToken,
 		client:      createRetryableClient(ctx, retryConfig),
 		retryConfig: retryConfig,
+		metadata:    metadata,
 		baseURL:     fmt.Sprintf("https://%s.storage.googleapis.com", bucketName),
 	}, nil
 }
@@ -173,6 +228,10 @@ func (m *MultipartUploader) initiateUpload(ctx context.Context) (string, error) 
 	req.Header.Set("Authorization", "Bearer "+m.token)
 	req.Header.Set("Content-Length", "0")
 	req.Header.Set("Content-Type", "application/octet-stream")
+	// Custom user metadata is set on initiate; the final object inherits it.
+	for k, v := range m.metadata {
+		req.Header.Set("x-goog-meta-"+k, v)
+	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -195,11 +254,6 @@ func (m *MultipartUploader) initiateUpload(ctx context.Context) (string, error) 
 }
 
 func (m *MultipartUploader) uploadPart(ctx context.Context, uploadID string, partNumber int, data []byte) (string, error) {
-	// Calculate MD5 for data integrity
-	hasher := md5.New()
-	hasher.Write(data)
-	md5Sum := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
-
 	url := fmt.Sprintf("%s/%s?partNumber=%d&uploadId=%s",
 		m.baseURL, m.objectName, partNumber, uploadID)
 
@@ -210,7 +264,94 @@ func (m *MultipartUploader) uploadPart(ctx context.Context, uploadID string, par
 
 	req.Header.Set("Authorization", "Bearer "+m.token)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	req.Header.Set("Content-MD5", md5Sum)
+	sum := md5.Sum(data) //nolint:gosec // GCS multipart uses Content-MD5 for transport integrity.
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(sum[:]))
+
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+
+		return "", fmt.Errorf("failed to upload part %d (status %d): %s", partNumber, resp.StatusCode, string(body))
+	}
+
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		return "", fmt.Errorf("no ETag returned for part %d", partNumber)
+	}
+
+	return etag, nil
+}
+
+type multiSliceReader struct {
+	slices [][]byte
+	idx    int
+	off    int
+}
+
+func (r *multiSliceReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		if r.idx >= len(r.slices) {
+			return 0, io.EOF
+		}
+
+		return 0, nil
+	}
+
+	var n int
+	for len(p) > 0 && r.idx < len(r.slices) {
+		current := r.slices[r.idx]
+		if r.off >= len(current) {
+			r.idx++
+			r.off = 0
+
+			continue
+		}
+
+		copied := copy(p, current[r.off:])
+		n += copied
+		r.off += copied
+		p = p[copied:]
+	}
+
+	if n > 0 {
+		return n, nil
+	}
+
+	return 0, io.EOF
+}
+
+// uploadPartSlices uploads a part from multiple byte slices without concatenating them.
+func (m *MultipartUploader) uploadPartSlices(ctx context.Context, uploadID string, partNumber int, slices [][]byte) (string, error) {
+	totalLen := 0
+	for _, s := range slices {
+		totalLen += len(s)
+	}
+
+	url := fmt.Sprintf("%s/%s?partNumber=%d&uploadId=%s",
+		m.baseURL, m.objectName, partNumber, uploadID)
+
+	// Use a ReaderFunc so the retryable client can replay the body on retries
+	bodyFn := func() (io.Reader, error) {
+		return &multiSliceReader{slices: slices}, nil
+	}
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, "PUT", url, retryablehttp.ReaderFunc(bodyFn))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	req.Header.Set("Content-Length", fmt.Sprintf("%d", totalLen))
+	h := md5.New() //nolint:gosec // GCS multipart uses Content-MD5 for transport integrity.
+	for _, s := range slices {
+		_, _ = h.Write(s)
+	}
+	req.Header.Set("Content-MD5", base64.StdEncoding.EncodeToString(h.Sum(nil)))
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -234,8 +375,8 @@ func (m *MultipartUploader) uploadPart(ctx context.Context, uploadID string, par
 
 func (m *MultipartUploader) completeUpload(ctx context.Context, uploadID string, parts []Part) error {
 	// Sort parts by part number
-	sort.Slice(parts, func(i, j int) bool {
-		return parts[i].PartNumber < parts[j].PartNumber
+	slices.SortFunc(parts, func(a, b Part) int {
+		return cmp.Compare(a.PartNumber, b.PartNumber)
 	})
 
 	completeReq := CompleteMultipartUpload{Parts: parts}
@@ -271,7 +412,7 @@ func (m *MultipartUploader) completeUpload(ctx context.Context, uploadID string,
 	return nil
 }
 
-func (m *MultipartUploader) UploadFileInParallel(ctx context.Context, filePath string, maxConcurrency int) (int64, error) {
+func (m *MultipartUploader) UploadFileInParallel(ctx context.Context, filePath string, maxConcurrency int, hasher hash.Hash) (int64, error) {
 	// Open file
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -298,9 +439,38 @@ func (m *MultipartUploader) UploadFileInParallel(ctx context.Context, filePath s
 		return 0, fmt.Errorf("failed to initiate upload: %w", err)
 	}
 
+	// Hash on a sibling goroutine while parts upload — the read overlaps the
+	// upload, adding no wall-clock latency. Own file handle (separate from the
+	// part uploaders' ReadAt); opened here so a failed upload can close it.
+	var hashFile *os.File
+	if hasher != nil {
+		hashFile, err = os.Open(filePath)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open file for checksum: %w", err)
+		}
+		defer hashFile.Close()
+	}
+
+	var eg errgroup.Group
+	if hashFile != nil {
+		eg.Go(func() error {
+			if _, err := io.Copy(hasher, hashFile); err != nil {
+				return fmt.Errorf("failed to checksum file: %w", err)
+			}
+
+			return nil
+		})
+	}
+
 	parts, err := m.uploadParts(ctx, maxConcurrency, numParts, fileSize, file, uploadID)
+	if hashFile != nil && err != nil {
+		hashFile.Close() // cancel the now-pointless io.Copy
+	}
+	if hashErr := eg.Wait(); err == nil {
+		err = hashErr
+	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to upload parts: %w", err)
+		return 0, fmt.Errorf("failed to upload file: %w", err)
 	}
 
 	if err := m.completeUpload(ctx, uploadID, parts); err != nil {

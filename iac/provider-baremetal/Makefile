@@ -26,6 +26,10 @@ tf_vars := TF_VAR_environment=$(TERRAFORM_ENVIRONMENT) \
 	$(call tfvar, S3_ACCESS_KEY) \
 	$(call tfvar, S3_SECRET_KEY) \
 	$(call tfvar, S3_REGION) \
+	$(call tfvar, APP_S3_ENDPOINT) \
+	$(call tfvar, APP_S3_ACCESS_KEY) \
+	$(call tfvar, APP_S3_SECRET_KEY) \
+	$(call tfvar, APP_S3_REGION) \
 	$(call tfvar, CONSUL_VERSION) \
 	$(call tfvar, NOMAD_VERSION) \
 	$(call tfvar, VAULT_VERSION) \

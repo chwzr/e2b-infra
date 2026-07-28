@@ -1,3 +1,5 @@
+//go:build linux
+
 package block
 
 import (
@@ -13,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
+	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/edsrzf/mmap-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -47,26 +49,17 @@ func NewErrCacheClosed(filePath string) *CacheClosedError {
 }
 
 type Cache struct {
-	filePath         string
-	size             int64
-	blockSize        int64
-	mmap             *mmap.MMap
-	mu               sync.RWMutex
-	dirty            sync.Map
-	dirtyGranularity int64
-	dirtyFile        bool
-	closed           atomic.Bool
+	filePath  string
+	size      int64
+	blockSize int64
+	mmap      *mmap.MMap
+	mu        sync.RWMutex
+	tracker   *Tracker // Dirty: payload in mmap; Zero: punched, emitted as Empty in the diff
+	dirtyFile bool
+	closed    atomic.Bool
 }
 
-// NewCache creates a cache with dirty tracking at blockSize granularity.
-// When we are passing filePath that is a file that has content we want to server want to use dirtyFile = true.
 func NewCache(size, blockSize int64, filePath string, dirtyFile bool) (*Cache, error) {
-	return NewCacheWithDirtyGranularity(size, blockSize, blockSize, filePath, dirtyFile)
-}
-
-// NewCacheWithDirtyGranularity creates a cache with dirty tracking at the specified granularity.
-// For chunker caches, dirtyGranularity can be larger than blockSize to reduce dirty map overhead.
-func NewCacheWithDirtyGranularity(size, blockSize, dirtyGranularity int64, filePath string, dirtyFile bool) (*Cache, error) {
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file: %w", err)
@@ -76,11 +69,11 @@ func NewCacheWithDirtyGranularity(size, blockSize, dirtyGranularity int64, fileP
 
 	if size == 0 {
 		return &Cache{
-			filePath:         filePath,
-			size:             size,
-			blockSize:        blockSize,
-			dirtyGranularity: dirtyGranularity,
-			dirtyFile:        dirtyFile,
+			filePath:  filePath,
+			size:      size,
+			blockSize: blockSize,
+			dirtyFile: dirtyFile,
+			tracker:   NewTracker(),
 		}, nil
 	}
 
@@ -100,12 +93,12 @@ func NewCacheWithDirtyGranularity(size, blockSize, dirtyGranularity int64, fileP
 	}
 
 	return &Cache{
-		mmap:             &mm,
-		filePath:         filePath,
-		size:             size,
-		blockSize:        blockSize,
-		dirtyGranularity: dirtyGranularity,
-		dirtyFile:        dirtyFile,
+		mmap:      &mm,
+		filePath:  filePath,
+		size:      size,
+		blockSize: blockSize,
+		dirtyFile: dirtyFile,
+		tracker:   NewTracker(),
 	}, nil
 }
 
@@ -117,10 +110,6 @@ func (c *Cache) ExportToDiff(ctx context.Context, out *os.File) (*header.DiffMet
 	ctx, childSpan := tracer.Start(ctx, "export-to-diff")
 	defer childSpan.End()
 
-	if c.dirtyGranularity != c.blockSize {
-		return nil, fmt.Errorf("ExportToDiff requires block-level dirty tracking (granularity %d != blockSize %d)", c.dirtyGranularity, c.blockSize)
-	}
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -129,11 +118,7 @@ func (c *Cache) ExportToDiff(ctx context.Context, out *os.File) (*header.DiffMet
 	}
 
 	if c.mmap == nil {
-		return &header.DiffMetadata{
-			Dirty:     bitset.New(0),
-			Empty:     bitset.New(0),
-			BlockSize: c.blockSize,
-		}, nil
+		return header.NewDiffMetadata(c.blockSize, nil, nil), nil
 	}
 
 	f, err := os.Open(c.filePath)
@@ -152,18 +137,8 @@ func (c *Cache) ExportToDiff(ctx context.Context, out *os.File) (*header.DiffMet
 		logger.L().Warn(ctx, "error syncing file", zap.Error(err))
 	}
 
-	buildStart := time.Now()
-	builder := header.NewDiffMetadataBuilder(c.size, c.blockSize)
-
-	// We don't need to sort the keys as the bitset handles the ordering.
-	c.dirty.Range(func(key, _ any) bool {
-		builder.AddDirtyOffset(key.(int64))
-
-		return true
-	})
-
-	diffMetadata := builder.Build()
-	telemetry.SetAttributes(ctx, attribute.Int64("build_metadata_ms", time.Since(buildStart).Milliseconds()))
+	dirty, empty := c.tracker.Export()
+	diffMetadata := header.NewDiffMetadata(c.blockSize, dirty, empty)
 
 	dst := int(out.Fd())
 	var writeOffset int64
@@ -221,11 +196,153 @@ func (c *Cache) ExportToDiff(ctx context.Context, out *os.File) (*header.DiffMet
 	telemetry.SetAttributes(ctx,
 		attribute.Int64("copy_ms", time.Since(copyStart).Milliseconds()),
 		attribute.Int64("total_size_bytes", c.size),
-		attribute.Int64("dirty_size_bytes", int64(diffMetadata.Dirty.Count())*c.blockSize),
+		attribute.Int64("dirty_size_bytes", int64(diffMetadata.Dirty.GetCardinality())*c.blockSize),
+		attribute.Int64("empty_size_bytes", int64(diffMetadata.Empty.GetCardinality())*c.blockSize),
 		attribute.Int64("total_ranges", totalRanges),
 	)
 
 	return diffMetadata, nil
+}
+
+// dedupDrain writes pageDirty pages from src to outPath packed at PageSize.
+func dedupDrain(
+	ctx context.Context,
+	src func(absOff int64) ([]byte, error),
+	pageDirty *roaring.Bitmap,
+	blockSize int64,
+	outPath string,
+	directIO bool,
+) (*Cache, error) {
+	openFlags := os.O_RDWR | os.O_CREATE
+	if directIO {
+		openFlags |= unix.O_DIRECT
+	}
+	f, err := os.OpenFile(outPath, openFlags, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open dedup cache: %w", err)
+	}
+	if want := int64(pageDirty.GetCardinality()) * header.PageSize; directIO && want > 0 {
+		if fErr := unix.Fallocate(int(f.Fd()), 0, 0, want); fErr != nil {
+			logger.L().Warn(ctx, "fallocate dedup cache; proceeding without preallocation", zap.Error(fErr))
+		}
+	}
+
+	fileOff, err := drainDirtyPages(ctx, int(f.Fd()), src, pageDirty, blockSize)
+	if err != nil {
+		return nil, errors.Join(err, f.Close(), os.Remove(outPath))
+	}
+
+	if directIO {
+		if err := f.Truncate(fileOff); err != nil {
+			return nil, errors.Join(fmt.Errorf("truncate dedup cache: %w", err), f.Close(), os.Remove(outPath))
+		}
+	}
+	if err := f.Close(); err != nil {
+		return nil, errors.Join(err, os.Remove(outPath))
+	}
+
+	cache, err := NewCache(fileOff, header.PageSize, outPath, false)
+	if err != nil {
+		return nil, errors.Join(err, os.Remove(outPath))
+	}
+	cache.setIsCached(0, fileOff)
+
+	return cache, nil
+}
+
+// drainDirtyPages packs pageDirty pages from src into fd. Mirrors
+// Cache.copyProcessMemory: coalesce contiguous pages into ranges, carve at
+// source-block boundaries, pre-split over MAX_RW_COUNT, then drainIovs.
+func drainDirtyPages(ctx context.Context, fd int, src func(absOff int64) ([]byte, error), pageDirty *roaring.Bitmap, blockSize int64) (int64, error) {
+	var ranges []Range
+	for r := range BitsetRanges(pageDirty, header.PageSize) {
+		for off := r.Start; off < r.End(); {
+			blockOff := (off / blockSize) * blockSize
+			chunkEnd := min(r.End(), blockOff+blockSize)
+			ranges = append(ranges, Range{Start: off, Size: chunkEnd - off})
+			off = chunkEnd
+		}
+	}
+	ranges = splitOversizedRanges(ranges, getAlignedMaxRwCount(header.PageSize))
+
+	if err := drainIovs(ranges, func(r Range) int64 { return r.Size }, header.PageSize,
+		func(destOff int64, batch []Range, _ int64) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			iovs := make([][]byte, len(batch))
+			for i, r := range batch {
+				blockOff := (r.Start / blockSize) * blockSize
+				buf, srcErr := src(blockOff)
+				if srcErr != nil {
+					return fmt.Errorf("slice src at %d: %w", blockOff, srcErr)
+				}
+				iovs[i] = buf[r.Start-blockOff : r.Start-blockOff+r.Size]
+			}
+			if err := pwritevAll(fd, destOff, iovs); err != nil {
+				return fmt.Errorf("pwritev dedup pages: %w", err)
+			}
+
+			return nil
+		}); err != nil {
+		return 0, err
+	}
+
+	return GetSize(ranges), nil
+}
+
+// Dedup writes pages from c that differ from base, packed at PageSize, to
+// outPath. bestEffort skips uncached blocks; directIO uses O_DIRECT.
+func (c *Cache) Dedup(
+	ctx context.Context,
+	base ReadonlyDevice,
+	dirty *roaring.Bitmap,
+	blockSize int64,
+	outPath string,
+	bestEffort bool,
+	directIO bool,
+	budget DedupBudget,
+) (*Cache, *header.DiffMetadata, error) {
+	ctx, span := tracer.Start(ctx, "dedup-pages")
+	defer span.End()
+
+	// c is packed in BitsetRanges order; map abs offset → packed offset.
+	packed := make(map[int64]int64, dirty.GetCardinality())
+	var cum int64
+	for r := range BitsetRanges(dirty, blockSize) {
+		for chunkOff := int64(0); chunkOff < r.Size; chunkOff += blockSize {
+			packed[r.Start+chunkOff] = cum
+			cum += blockSize
+		}
+	}
+	src := func(absOff int64) ([]byte, error) {
+		idx, ok := packed[absOff]
+		if !ok {
+			return nil, fmt.Errorf("dedup src: %d not packed", absOff)
+		}
+
+		return c.Slice(idx, blockSize)
+	}
+
+	compareStart := time.Now()
+	plan, err := dedupCompare(ctx, src, base, dirty, blockSize, bestEffort, budget)
+	if err != nil {
+		return nil, nil, err
+	}
+	compareDur := time.Since(compareStart)
+
+	writeStart := time.Now()
+	cache, err := dedupDrain(ctx, src, plan.pageDirty, blockSize, outPath, directIO)
+	if err != nil {
+		return nil, nil, err
+	}
+	recordDedupAttrs(ctx, plan, int64(plan.pageEmpty.GetCardinality()), compareDur, time.Since(writeStart))
+
+	return cache, &header.DiffMetadata{
+		Dirty:     plan.pageDirty,
+		Empty:     plan.pageEmpty,
+		BlockSize: header.PageSize,
+	}, nil
 }
 
 func (c *Cache) ReadAt(b []byte, off int64) (int, error) {
@@ -335,45 +452,25 @@ func (c *Cache) sliceDirect(off, length int64) ([]byte, error) {
 	return (*c.mmap)[off:end], nil
 }
 
+// Zero blocks are treated as cached: the mmap region reads back as zero (punched).
 func (c *Cache) isCached(off, length int64) bool {
-	// Zero-length is vacuously true (no-op)
-	if length <= 0 {
-		return true
-	}
+	start := uint32(header.BlockIdx(off, c.blockSize))
+	end := uint32(header.BlockCeilIdx(min(off+length, c.size), c.blockSize))
 
-	// Make sure the offset is within the cache size
-	if off >= c.size {
-		return false
-	}
-
-	// Cap if the length goes beyond the cache size, so we don't check for blocks that are out of bounds.
-	end := min(off+length, c.size)
-
-	startKey := (off / c.dirtyGranularity) * c.dirtyGranularity
-	endKey := ((end - 1) / c.dirtyGranularity) * c.dirtyGranularity
-
-	for key := startKey; key <= endKey; key += c.dirtyGranularity {
-		if _, ok := c.dirty.Load(key); !ok {
-			return false
-		}
-	}
-
-	return true
+	return c.tracker.Present(start, end)
 }
 
 func (c *Cache) setIsCached(off, length int64) {
-	// Zero-length is a no-op
-	if length <= 0 {
-		return
-	}
+	start := uint32(header.BlockIdx(off, c.blockSize))
+	end := uint32(header.BlockCeilIdx(off+length, c.blockSize))
 
-	end := off + length
+	c.tracker.SetRange(start, end, Dirty)
+}
 
-	startKey := (off / c.dirtyGranularity) * c.dirtyGranularity
-	endKey := ((end - 1) / c.dirtyGranularity) * c.dirtyGranularity
-
-	for key := startKey; key <= endKey; key += c.dirtyGranularity {
-		c.dirty.Store(key, struct{}{})
+// punchHole frees backing pages; clear() fallback if MADV_REMOVE is unsupported.
+func (c *Cache) punchHole(off, length int64) {
+	if err := unix.Madvise((*c.mmap)[off:off+length], unix.MADV_REMOVE); err != nil {
+		clear((*c.mmap)[off : off+length])
 	}
 }
 
@@ -387,31 +484,87 @@ func (c *Cache) WriteAtWithoutLock(b []byte, off int64) (int, error) {
 		return 0, nil
 	}
 
+	if int64(len(b))%c.blockSize != 0 || off%c.blockSize != 0 {
+		return 0, fmt.Errorf("misaligned write: len=%d off=%d block=%d", len(b), off, c.blockSize)
+	}
+
 	end := min(off+int64(len(b)), c.size)
+	if end <= off {
+		return 0, nil
+	}
 
-	n := copy((*c.mmap)[off:end], b)
+	// detect-zeroes=unmap: coalesce contiguous same-state blocks into one bulk
+	// copy or punchHole call. Caller must pass a block-aligned write (NBD invariant).
+	flush := func(runStart, runEnd int64, runZero bool) {
+		startIdx := uint32(header.BlockIdx(runStart, c.blockSize))
+		endIdx := uint32(header.BlockCeilIdx(runEnd, c.blockSize))
+		if runZero {
+			c.punchHole(runStart, runEnd-runStart)
+			c.tracker.SetRange(startIdx, endIdx, Zero)
+		} else {
+			copy((*c.mmap)[runStart:runEnd], b[runStart-off:runEnd-off])
+			c.tracker.SetRange(startIdx, endIdx, Dirty)
+		}
+	}
 
-	c.setIsCached(off, end-off)
+	runStart := off
+	runZero := header.IsZero(b[:c.blockSize])
+	for i := off + c.blockSize; i < end; i += c.blockSize {
+		z := header.IsZero(b[i-off : i-off+c.blockSize])
+		if z == runZero {
+			continue
+		}
+		flush(runStart, i, runZero)
+		runStart = i
+		runZero = z
+	}
+	flush(runStart, end, runZero)
 
-	return n, nil
+	return int(end - off), nil
+}
+
+// WriteZeroesAt punches the range and marks all touched blocks Zero.
+// Caller must pass a block-aligned offset/length (NBD invariant).
+func (c *Cache) WriteZeroesAt(off, length int64) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.mmap == nil {
+		return 0, nil
+	}
+
+	if c.isClosed() {
+		return 0, NewErrCacheClosed(c.filePath)
+	}
+
+	end := min(off+length, c.size)
+	if end <= off {
+		return 0, nil
+	}
+
+	c.punchHole(off, end-off)
+	c.tracker.SetRange(
+		uint32(header.BlockIdx(off, c.blockSize)),
+		uint32(header.BlockCeilIdx(end, c.blockSize)),
+		Zero,
+	)
+
+	return int(end - off), nil
 }
 
 // FileSize returns the size of the cache on disk.
 // The size might differ from the dirty size, as it may not be fully on disk.
-func (c *Cache) FileSize() (int64, error) {
+func (c *Cache) FileSize(_ context.Context) (int64, error) {
 	var stat syscall.Stat_t
-	err := syscall.Stat(c.filePath, &stat)
-	if err != nil {
+	if err := syscall.Stat(c.filePath, &stat); err != nil {
 		return 0, fmt.Errorf("failed to get file stats: %w", err)
 	}
 
-	var fsStat syscall.Statfs_t
-	err = syscall.Statfs(c.filePath, &fsStat)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get disk stats for path %s: %w", c.filePath, err)
-	}
+	// Per POSIX (and Linux man 2 stat), stat.Blocks is always reported in
+	// 512-byte units, regardless of the underlying filesystem's block size.
+	const stBlockSize = 512
 
-	return stat.Blocks * fsStat.Bsize, nil
+	return stat.Blocks * stBlockSize, nil
 }
 
 func (c *Cache) address(off int64) (*byte, error) {
@@ -461,8 +614,8 @@ func (c *Cache) BlockSize() int64 {
 	return c.blockSize
 }
 
-func (c *Cache) Path() string {
-	return c.filePath
+func (c *Cache) Path(_ context.Context) (string, error) {
+	return c.filePath, nil
 }
 
 func NewCacheFromProcessMemory(
@@ -496,101 +649,49 @@ func (c *Cache) copyProcessMemory(
 	pid int,
 	rs []Range,
 ) error {
-	// We need to align the maximum read/write count to the block size, so we can use mark the offsets as dirty correctly.
-	// Because the MAX_RW_COUNT is not aligned to arbitrary block sizes, we need to align it to the block size we use for the cache.
-	alignedRwCount := getAlignedMaxRwCount(c.blockSize)
+	// Pre-split so no single iov exceeds MAX_RW_COUNT.
+	ranges := splitOversizedRanges(rs, getAlignedMaxRwCount(c.blockSize))
 
-	// We need to split the ranges because the Kernel does not support reading/writing more than MAX_RW_COUNT bytes in a single operation.
-	ranges := splitOversizedRanges(rs, alignedRwCount)
-
-	var offset int64
-	var rangeIdx int64
-
-	for {
-		var remote []unix.RemoteIovec
-
-		var segmentSize int64
-
-		// We iterate over the range of all ranges until we have reached the limit of the IOV_MAX,
-		// or until the next range would overflow the MAX_RW_COUNT.
-		for ; rangeIdx < int64(len(ranges)); rangeIdx++ {
-			r := ranges[rangeIdx]
-
-			if len(remote) == IOV_MAX {
-				break
+	return drainIovs(ranges, func(r Range) int64 { return r.Size }, c.blockSize,
+		func(off int64, batch []Range, batchBytes int64) error {
+			remote := make([]unix.RemoteIovec, len(batch))
+			for i, r := range batch {
+				remote[i] = unix.RemoteIovec{Base: uintptr(r.Start), Len: int(r.Size)}
 			}
-
-			if segmentSize+r.Size > alignedRwCount {
-				break
-			}
-
-			remote = append(remote, unix.RemoteIovec{
-				Base: uintptr(r.Start),
-				Len:  int(r.Size),
-			})
-
-			segmentSize += r.Size
-		}
-
-		if len(remote) == 0 {
-			break
-		}
-
-		address, err := c.address(offset)
-		if err != nil {
-			return fmt.Errorf("failed to get address: %w", err)
-		}
-
-		local := []unix.Iovec{
-			{
-				Base: address,
-				// We could keep this as full cache length, but we might as well be exact here.
-				Len: uint64(segmentSize),
-			},
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			// We could retry only on the remaining segment size, but for simplicity we retry the whole segment.
-			n, err := unix.ProcessVMReadv(pid,
-				local,
-				remote,
-				0,
-			)
-			if errors.Is(err, unix.EAGAIN) {
-				continue
-			}
-			if errors.Is(err, unix.EINTR) {
-				continue
-			}
-			if errors.Is(err, unix.ENOMEM) {
-				time.Sleep(oomMinBackoff + time.Duration(rand.Intn(int(oomMaxJitter.Milliseconds())))*time.Millisecond)
-
-				continue
-			}
-
+			address, err := c.address(off)
 			if err != nil {
-				return fmt.Errorf("failed to read memory: %w", err)
+				return fmt.Errorf("failed to get address: %w", err)
 			}
+			local := []unix.Iovec{{Base: address, Len: uint64(batchBytes)}}
 
-			if int64(n) != segmentSize {
-				return fmt.Errorf("failed to read memory: expected %d bytes, got %d", segmentSize, n)
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				n, err := unix.ProcessVMReadv(pid, local, remote, 0)
+				if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
+					continue
+				}
+				if errors.Is(err, unix.ENOMEM) {
+					time.Sleep(oomMinBackoff + time.Duration(rand.Intn(int(oomMaxJitter.Milliseconds())))*time.Millisecond)
+
+					continue
+				}
+				if err != nil {
+					return fmt.Errorf("failed to read memory: %w", err)
+				}
+				if int64(n) != batchBytes {
+					return fmt.Errorf("failed to read memory: expected %d bytes, got %d", batchBytes, n)
+				}
+
+				c.setIsCached(off, batchBytes)
+
+				return nil
 			}
-
-			c.setIsCached(offset, segmentSize)
-
-			offset += segmentSize
-
-			break
-		}
-	}
-
-	return nil
+		})
 }
 
 // Split ranges so there are no ranges larger than maxSize.
