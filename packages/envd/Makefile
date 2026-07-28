@@ -6,6 +6,7 @@ LDFLAGS=-ldflags "-X=main.commitSHA=$(BUILD)"
 
 AWS_BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
 GCP_BUCKET_PREFIX ?= $(GCP_PROJECT_ID)-
+S3_BUCKET_PREFIX ?= $(PREFIX)$(S3_REGION)-
 
 # Architecture for builds. Defaults to amd64; override for ARM64 builds.
 # (e.g., BUILD_ARCH=arm64 make build-local)
@@ -22,6 +23,9 @@ upload:
 	chmod +x bin/envd
 ifeq ($(PROVIDER),aws)
 	aws s3 cp ./bin/envd "s3://${AWS_BUCKET_PREFIX}fc-env-pipeline/envd" --profile ${AWS_PROFILE} --cache-control "no-cache, max-age=0"
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
+	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) \
+		aws s3 cp ./bin/envd "s3://$(S3_BUCKET_PREFIX)fc-env-pipeline/envd" --endpoint-url "https://$(S3_ENDPOINT)" --cache-control "no-cache, max-age=0"
 else
 	gsutil -h "Cache-Control:no-cache, max-age=0" cp bin/envd "gs://${GCP_BUCKET_PREFIX}fc-env-pipeline/envd"
 endif

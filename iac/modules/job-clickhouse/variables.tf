@@ -3,8 +3,8 @@ variable "provider_name" {
   description = "Cloud provider: gcp or aws"
 
   validation {
-    condition     = contains(["gcp", "aws"], var.provider_name)
-    error_message = "provider_name must be 'gcp' or 'aws'"
+    condition     = contains(["gcp", "aws", "hetzner"], var.provider_name)
+    error_message = "provider_name must be 'gcp', 'aws', or 'hetzner'"
   }
 }
 
@@ -97,6 +97,12 @@ variable "gcs_credentials_json_encoded" {
 variable "aws_region" {
   type    = string
   default = ""
+}
+
+variable "s3_endpoint" {
+  type        = string
+  default     = ""
+  description = "S3-compatible endpoint URL for Hetzner Object Storage backups"
 }
 
 // ---

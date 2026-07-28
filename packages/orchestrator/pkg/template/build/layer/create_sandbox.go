@@ -1,3 +1,5 @@
+//go:build linux
+
 package layer
 
 import (
@@ -89,7 +91,7 @@ func ReservedBlocksOptions(ctx context.Context, featureFlags *featureflags.Clien
 func NewCreateSandbox(config *sandbox.Config, sandboxFactory *sandbox.Factory, timeout time.Duration, options ...CreateSandboxOption) *CreateSandbox {
 	opts := &createSandboxOptions{
 		rootfsCachePath: "",
-		ioEngine:        utils.ToPtr(DefaultIoEngine),
+		ioEngine:        new(DefaultIoEngine),
 	}
 	for _, option := range options {
 		option(opts)
@@ -165,6 +167,7 @@ func (cs *CreateSandbox) Sandbox(
 
 	err = sbx.WaitForEnvd(
 		ctx,
+		sandbox.StartTypeCreate,
 		waitEnvdTimeout,
 	)
 	if err != nil {

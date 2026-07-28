@@ -5,6 +5,7 @@ locals {
       loki_port                = var.loki_port
       bucket_name              = var.bucket_name
       aws_region               = var.aws_region
+      s3_endpoint              = var.s3_endpoint
       loki_use_v13_schema_from = var.loki_use_v13_schema_from
     },
   )

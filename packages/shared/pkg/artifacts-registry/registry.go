@@ -17,6 +17,7 @@ const (
 	GCPStorageProvider   RegistryProvider = "GCP_ARTIFACTS"
 	AWSStorageProvider   RegistryProvider = "AWS_ECR"
 	LocalStorageProvider RegistryProvider = "Local"
+	DockerHubProvider    RegistryProvider = "DockerHub"
 
 	DefaultRegistryProvider RegistryProvider = GCPStorageProvider
 
@@ -44,6 +45,8 @@ func GetArtifactsRegistryProvider(ctx context.Context) (ArtifactsRegistry, error
 		return NewGCPArtifactsRegistry(setupCtx)
 	case LocalStorageProvider:
 		return NewLocalArtifactsRegistry()
+	case DockerHubProvider:
+		return NewDockerHubArtifactsRegistry()
 	}
 
 	return nil, fmt.Errorf("unknown artifacts registry provider: %s", provider)

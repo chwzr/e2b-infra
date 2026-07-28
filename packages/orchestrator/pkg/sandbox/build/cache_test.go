@@ -1,3 +1,5 @@
+//go:build linux
+
 package build
 
 // Race Condition Tests:
@@ -18,13 +20,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 )
 
 const (
@@ -155,8 +161,8 @@ func TestDiffStoreRefreshTTLEviction(t *testing.T) {
 
 	// Refresh diff expiration
 	time.Sleep(ttl / 2)
-	_, err = store.Get(t.Context(), diff)
-	require.NoError(t, err)
+	_, ok := store.Get(diff.CacheKey())
+	require.True(t, ok)
 
 	// Try to expire diff
 	time.Sleep(ttl/2 + time.Microsecond)
@@ -250,8 +256,8 @@ func TestDiffStoreDelayEvictionAbort(t *testing.T) { //nolint:paralleltest // ve
 	assert.True(t, dFound)
 
 	// Abort removal of diff
-	_, err = store.Get(t.Context(), diff)
-	require.NoError(t, err)
+	_, ok := store.Get(diff.CacheKey())
+	require.True(t, ok)
 
 	found = store.Has(diff)
 	assert.True(t, found)
@@ -394,8 +400,7 @@ func TestDiffStoreConcurrentEvictionRace(t *testing.T) {
 
 				// Occasionally try to access the item, which calls resetDelete
 				if j%5 == 0 {
-					_, err := store.Get(t.Context(), diff)
-					assert.NoError(t, err)
+					store.Get(diff.CacheKey())
 				}
 			}
 		}(i)
@@ -479,10 +484,9 @@ func TestDiffStoreResetDeleteRace(t *testing.T) {
 			// Small random delay to desynchronize goroutines slightly
 			time.Sleep(time.Duration(iteration%10) * time.Microsecond)
 
-			// This call to Get() will trigger resetDelete, which is where the race occurs
-			// Multiple goroutines calling resetDelete on the same key can race
-			_, err = store.Get(t.Context(), iterDiff)
-			assert.NoError(t, err)
+			// This call will trigger resetDelete, which is where the race occurs.
+			// Multiple goroutines calling resetDelete on the same key can race.
+			store.Get(iterDiff.CacheKey())
 
 			// Also try direct resetDelete calls to increase race probability
 			store.resetDelete(iterDiff.CacheKey())
@@ -515,4 +519,67 @@ func flagsWithMaxBuildCachePercentage(tb testing.TB, maxBuildCachePercentage int
 	})
 
 	return flags
+}
+
+// uuid.Nil mapping reports cached without touching the diff store.
+func TestFileIsCached_UUIDNilMappingReportsCached(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewDiffStore(
+		mustParseCfg(t),
+		flagsWithMaxBuildCachePercentage(t, 90),
+		t.TempDir(),
+		time.Hour,
+		time.Minute,
+	)
+	require.NoError(t, err)
+
+	const size = 4096
+	hdr, err := header.NewHeader(
+		header.NewTemplateMetadata(uuid.Nil, size, size),
+		[]header.BuildMap{{Offset: 0, Length: size, BuildId: uuid.Nil}},
+	)
+	require.NoError(t, err)
+
+	m, err := blockmetrics.NewMetrics(noop.NewMeterProvider())
+	require.NoError(t, err)
+	f := NewFile(hdr, store, Memfile, nil, m)
+
+	require.True(t, f.IsCached(t.Context(), 0, size))
+}
+
+// Uninitialized StorageDiff reports uncached without panicking or Init'ing.
+func TestFileIsCached_UninitializedChunkerReportsUncached(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewDiffStore(
+		mustParseCfg(t),
+		flagsWithMaxBuildCachePercentage(t, 90),
+		t.TempDir(),
+		time.Hour,
+		time.Minute,
+	)
+	require.NoError(t, err)
+
+	parentBuildID := uuid.New()
+	const size = 4096
+	hdr, err := header.NewHeader(
+		header.NewTemplateMetadata(parentBuildID, size, size),
+		[]header.BuildMap{{Offset: 0, Length: size, BuildId: parentBuildID}},
+	)
+	require.NoError(t, err)
+
+	m, err := blockmetrics.NewMetrics(noop.NewMeterProvider())
+	require.NoError(t, err)
+	f := NewFile(hdr, store, Memfile, nil, m)
+
+	require.False(t, f.IsCached(t.Context(), 0, size))
+}
+
+func mustParseCfg(t *testing.T) cfg.Config {
+	t.Helper()
+	c, err := cfg.Parse()
+	require.NoError(t, err)
+
+	return c
 }

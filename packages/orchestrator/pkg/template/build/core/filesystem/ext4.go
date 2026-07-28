@@ -1,8 +1,11 @@
+//go:build linux
+
 package filesystem
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,15 +38,15 @@ func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64)
 	defer tuneSpan.End()
 
 	if blockSize < inodesRatio {
-		return fmt.Errorf("block size must be greater than inodes ratio")
+		return errors.New("block size must be greater than inodes ratio")
 	}
 
 	cmd := exec.CommandContext(ctx,
 		"mkfs.ext4",
 		"-O", strings.Join([]string{
-			// Matches the final ext4 features used by tar2ext4 tool.
-			// But enables resize_inode, sparse_super (required for resize_inode),
-			// has_journal, and metadata_csum are kept as defaults.
+			// Explicit feature list for the rootfs. Defaults (resize_inode,
+			// sparse_super, has_journal, metadata_csum) are kept; we toggle
+			// only what we want to add or strip below.
 			"^64bit",
 			"^dir_index",
 			"^dir_nlink",
@@ -53,6 +56,8 @@ func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64)
 			"filetype",
 			"flex_bg",
 			"huge_file",
+			// Pack file data <~160 B inside the inode to avoid a 4 KiB data block per tiny file.
+			"inline_data",
 			"large_file",
 			"sparse_super2",
 		}, ","),
@@ -359,7 +364,7 @@ func parseFreeBlocks(debugfsOutput string) (int64, error) {
 	re := regexp.MustCompile(`Free blocks:\s+(\d+)`)
 	matches := re.FindStringSubmatch(debugfsOutput)
 	if len(matches) < 2 {
-		return 0, fmt.Errorf("could not find free blocks in debugfs output")
+		return 0, errors.New("could not find free blocks in debugfs output")
 	}
 	freeBlocks, err := strconv.ParseInt(matches[1], 10, 64)
 	if err != nil {
@@ -374,7 +379,7 @@ func parseReservedBlocks(debugfsOutput string) (int64, error) {
 	re := regexp.MustCompile(`Reserved block count:\s+(\d+)`)
 	matches := re.FindStringSubmatch(debugfsOutput)
 	if len(matches) < 2 {
-		return 0, fmt.Errorf("could not find reserved blocks in debugfs output")
+		return 0, errors.New("could not find reserved blocks in debugfs output")
 	}
 	reservedBlocks, err := strconv.ParseInt(matches[1], 10, 64)
 	if err != nil {

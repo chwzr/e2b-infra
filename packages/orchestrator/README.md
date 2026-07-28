@@ -37,7 +37,7 @@ Flags:
 - `-storage <path>` - Local path or `gs://bucket` (enables local mode with auto-download of kernel/FC)
 - `-sandbox-dir <path>` - Override `SANDBOX_DIR` (the rootfs path baked into the snapshot)
 - `-kernel <version>` - Kernel version (default: `vmlinux-6.1.158`)
-- `-firecracker <version>` - Firecracker version (default: `v1.12.1_210cbac`)
+- `-firecracker <version>` - Firecracker version (default: `v1.14.1_458ca91`)
 - `-vcpu <n>` - vCPUs (default: `1`)
 - `-memory <mb>` - Memory in MB (default: `512`)
 - `-disk <mb>` - Disk in MB (default: `1000`)
@@ -300,3 +300,7 @@ Automatically set in local mode. Set before running to override:
 - `ORCHESTRATOR_BASE_PATH` - Base orchestrator data (local: `{storage}/orchestrator`, prod: `/orchestrator`)
 - `SNAPSHOT_CACHE_DIR` - Snapshot cache, ideally on NVMe (local: `{storage}/snapshot-cache`, prod: `/mnt/snapshot-cache`)
 - `SANDBOX_DIR` - Sandbox working dir (default: `/fc-vm`)
+
+## Limitations
+
+- Custom template builds require Debian/Ubuntu-based base images (images that provide the `apt` package manager). Non-Debian images such as Alpine, CentOS/RHEL, or other distributions without `apt` are not supported and will fail during the template build/provisioning process. The provisioning scripts used during template build call `apt` and expect Debian-specific package names and file locations.

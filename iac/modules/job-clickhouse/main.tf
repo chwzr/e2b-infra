@@ -36,6 +36,7 @@ locals {
     backup_folder                = var.backup_folder
     gcs_credentials_json_encoded = var.gcs_credentials_json_encoded
     aws_region                   = var.aws_region
+    s3_endpoint                  = var.s3_endpoint
   }
 }
 

@@ -366,6 +366,10 @@ processors:
         host.id:
           enabled: false
 %{ endif }
+%{ if provider_name == "hetzner" }
+    detectors: [env]
+    override: true
+%{ endif }
 
   # For some reason, the metrics require us to set datapoint.attribute and won't accept the resource.attribute
   # That is why we can't use the resource/set_attributes processor

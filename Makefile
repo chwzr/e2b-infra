@@ -6,10 +6,18 @@ PROVIDER ?= gcp
 
 AWS_BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
 GCP_BUCKET_PREFIX ?= $(GCP_PROJECT_ID)-
+# Proxmox/Hetzner: S3-compatible bucket naming matches init/buckets.tf (bucket_prefix = $${prefix}$${s3_region}-)
+S3_BUCKET_PREFIX ?= $(PREFIX)$(S3_REGION)-
 
 .PHONY: provider-login
 provider-login:
 	$(MAKE) -C iac/provider-$(PROVIDER) provider-login
+
+# Provider-specific one-time host bootstrap (currently Proxmox only:
+# nested virt, IP forwarding, SDN bridge + SNAT, ingress DNAT).
+.PHONY: setup-pve-host
+setup-pve-host:
+	$(MAKE) -C iac/provider-$(PROVIDER) setup-pve-host
 
 .PHONY: init
 init:
@@ -81,6 +89,7 @@ build-and-upload:build-and-upload/api
 build-and-upload:build-and-upload/client-proxy
 build-and-upload:build-and-upload/dashboard-api
 build-and-upload:build-and-upload/docker-reverse-proxy
+build-and-upload:build-and-upload/ingress
 build-and-upload:build-and-upload/clean-nfs-cache
 build-and-upload:build-and-upload/orchestrator
 build-and-upload:build-and-upload/template-manager
@@ -112,6 +121,15 @@ ifeq ($(PROVIDER),aws)
 	aws s3 cp s3://e2b-prod-public-builds/firecrackers/ ./.firecrackers/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
 	aws s3 cp ./.kernels/ s3://${AWS_BUCKET_PREFIX}fc-kernels/ --recursive --profile ${AWS_PROFILE}
 	aws s3 cp ./.firecrackers/ s3://${AWS_BUCKET_PREFIX}fc-versions/ --recursive --profile ${AWS_PROFILE}
+	rm -rf ./.kernels
+	rm -rf ./.firecrackers
+else ifneq (,$(filter $(PROVIDER),proxmox hetzner baremetal))
+	mkdir -p ./.kernels
+	mkdir -p ./.firecrackers
+	aws s3 cp s3://e2b-prod-public-builds/kernels/ ./.kernels/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
+	aws s3 cp s3://e2b-prod-public-builds/firecrackers/ ./.firecrackers/ --recursive --no-sign-request --endpoint-url https://storage.googleapis.com
+	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) aws s3 cp ./.kernels/ s3://$(S3_BUCKET_PREFIX)fc-kernels/ --recursive --endpoint-url https://$(S3_ENDPOINT)
+	AWS_ACCESS_KEY_ID=$(S3_ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(S3_SECRET_KEY) aws s3 cp ./.firecrackers/ s3://$(S3_BUCKET_PREFIX)fc-versions/ --recursive --endpoint-url https://$(S3_ENDPOINT)
 	rm -rf ./.kernels
 	rm -rf ./.firecrackers
 else

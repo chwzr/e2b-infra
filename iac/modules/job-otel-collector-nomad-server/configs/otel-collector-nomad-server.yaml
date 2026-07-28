@@ -115,6 +115,10 @@ processors:
         host.name:
           enabled: true
 %{ endif }
+%{ if provider_name == "hetzner" }
+    detectors: [env]
+    override: true
+%{ endif }
 
   transform/set-name:
     metric_statements:

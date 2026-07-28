@@ -3,8 +3,8 @@ variable "provider_name" {
   description = "Cloud provider: gcp or aws"
 
   validation {
-    condition     = contains(["gcp", "aws"], var.provider_name)
-    error_message = "provider_name must be 'gcp' or 'aws'"
+    condition     = contains(["gcp", "aws", "hetzner"], var.provider_name)
+    error_message = "provider_name must be 'gcp', 'aws', or 'hetzner'"
   }
 }
 
@@ -32,6 +32,25 @@ variable "provider_aws_config" {
   })
   default = {
     region                 = ""
+    docker_repository_name = ""
+  }
+}
+
+variable "provider_hetzner_config" {
+  type = object({
+    s3_endpoint            = optional(string, "")
+    s3_region              = optional(string, "")
+    s3_access_key          = optional(string, "")
+    s3_secret_key          = optional(string, "")
+    docker_registry_url    = optional(string, "")
+    docker_repository_name = optional(string, "")
+  })
+  default = {
+    s3_endpoint            = ""
+    s3_region              = ""
+    s3_access_key          = ""
+    s3_secret_key          = ""
+    docker_registry_url    = ""
     docker_repository_name = ""
   }
 }
